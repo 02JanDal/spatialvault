@@ -97,6 +97,6 @@ jobs:
       - name: Sign the Docker image
         env:
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
-          TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_URI: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         run: |
-          echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
+          cosign sign --yes ${IMAGE_URI}@${DIGEST}
