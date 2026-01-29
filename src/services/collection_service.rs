@@ -495,6 +495,27 @@ impl CollectionService {
         Ok(result.map(|(srid,)| srid))
     }
 
+    /// Batch fetch extent and storage_crs for multiple collections efficiently
+    /// Returns a tuple of (extent, storage_crs) for each collection
+    pub async fn get_collection_metadata_batch(
+        &self,
+        collections: &[Collection],
+    ) -> AppResult<Vec<(Option<Extent>, Option<i32>)>> {
+        let mut results = Vec::with_capacity(collections.len());
+        
+        for collection in collections {
+            // Fetch extent and storage_crs in parallel for each collection
+            let extent_future = self.compute_extent(collection);
+            let storage_crs_future = self.get_storage_crs(collection);
+            
+            let (extent, storage_crs) = tokio::join!(extent_future, storage_crs_future);
+            
+            results.push((extent?, storage_crs?));
+        }
+        
+        Ok(results)
+    }
+
     pub async fn get_collection_schema(
         &self,
         username: &str,

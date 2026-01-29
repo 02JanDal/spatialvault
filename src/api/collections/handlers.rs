@@ -30,8 +30,8 @@ use crate::services::CollectionService;
 /// 
 /// Both endpoints now include all links (self, items, parent, schema, type-specific)
 /// as per OGC API Features specification for consistency.
-/// The main difference is that extent and storage_crs are computed on-demand
-/// for the detail endpoint only, to avoid performance overhead on list operations.
+/// Both extent and storage_crs are computed from the database for all endpoints
+/// to ensure complete and accurate collection metadata.
 fn build_collection_response(
     collection: &Collection,
     base_url: &str,
@@ -113,12 +113,15 @@ pub async fn list_collections(
 
     let base_url = &config.base_url;
 
+    // Batch fetch extent and storage_crs for all collections to avoid N+1 queries
+    let metadata = service.get_collection_metadata_batch(&collections).await?;
+
     let collection_responses: Vec<CollectionResponse> = collections
         .iter()
-        .map(|c| {
-            // Include all links to synchronize with detail endpoint response structure,
-            // but skip extent/storage_crs computation to avoid performance overhead
-            build_collection_response(c, base_url, None, None, true)
+        .zip(metadata.iter())
+        .map(|(c, (extent, storage_crs))| {
+            // Include all links and metadata for consistency with detail endpoint
+            build_collection_response(c, base_url, extent.clone(), *storage_crs, true)
         })
         .collect();
 
