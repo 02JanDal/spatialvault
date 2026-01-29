@@ -157,6 +157,16 @@ pub async fn get_collection(
         .with_title("Schema for this collection"),
     );
 
+    // Add queryables link (OGC API Features - Part 3: Filtering)
+    links.push(
+        Link::new(
+            format!("{}/collections/{}/queryables", base_url, id),
+            "http://www.opengis.net/def/rel/ogc/1.0/queryables",
+        )
+        .with_type("application/schema+json")
+        .with_title("Queryable properties for this collection"),
+    );
+
     let response = CollectionResponse {
         id: id.clone(),
         title: collection.title.clone(),
@@ -479,6 +489,37 @@ fn get_collection_schema_docs(op: TransformOperation) -> TransformOperation {
         })
 }
 
+/// Path parameters for collection queryables endpoint
+#[aide::axum::typed_path]
+#[typed_path("/collections/{collection_id}/queryables")]
+pub struct CollectionQueryablesPath {
+    /// The collection identifier
+    pub collection_id: String,
+}
+
+pub async fn get_collection_queryables(
+    Extension(_config): Extension<Arc<Config>>,
+    Extension(user): Extension<AuthenticatedUser>,
+    State(service): State<Arc<CollectionService>>,
+    path: CollectionQueryablesPath,
+) -> AppResult<Json<CollectionSchema>> {
+    let collection_id = path.collection_id;
+    let queryables = service
+        .get_collection_queryables(&user.username, &collection_id)
+        .await?;
+
+    Ok(Json(queryables))
+}
+
+fn get_collection_queryables_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Get collection queryables")
+        .description("Returns the JSON Schema describing queryable properties in this collection (OGC API Features - Part 3: Filtering)")
+        .tag("Collections")
+        .response_with::<200, Json<CollectionSchema>, _>(|res| {
+            res.description("Collection queryables")
+        })
+}
+
 pub fn routes(service: Arc<CollectionService>) -> ApiRouter {
     ApiRouter::new()
         .api_route(
@@ -496,6 +537,10 @@ pub fn routes(service: Arc<CollectionService>) -> ApiRouter {
         .api_route(
             "/collections/{collection_id}/schema",
             get_with(get_collection_schema, get_collection_schema_docs),
+        )
+        .api_route(
+            "/collections/{collection_id}/queryables",
+            get_with(get_collection_queryables, get_collection_queryables_docs),
         )
         .with_state(service)
 }
