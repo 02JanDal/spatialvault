@@ -94,11 +94,6 @@ pub async fn get_collection(
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        let location_value = format!("{}/collections/{}", config.base_url, new_name)
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
-        headers.insert(header::LOCATION, location_value);
         return Err(AppError::NotFound(format!(
             "Collection moved to {}",
             new_name
@@ -457,7 +452,7 @@ pub struct CollectionSchemaPath {
 }
 
 pub async fn get_collection_schema(
-    Extension(config): Extension<Arc<Config>>,
+    Extension(_config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionSchemaPath,
@@ -465,11 +460,6 @@ pub async fn get_collection_schema(
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        let location_value = format!("{}/collections/{}/schema", config.base_url, new_name)
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
-        headers.insert(header::LOCATION, location_value);
         return Err(AppError::NotFound(format!(
             "Collection moved to {}",
             new_name

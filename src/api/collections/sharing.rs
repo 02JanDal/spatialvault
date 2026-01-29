@@ -7,7 +7,7 @@ use aide::{
 };
 use axum::{
     extract::{Extension, State},
-    http::{header, HeaderMap, StatusCode},
+    http::StatusCode,
     Json,
 };
 use schemars::JsonSchema;
@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::auth::AuthenticatedUser;
-use crate::config::Config;
 use crate::error::{AppError, AppResult};
 use crate::services::CollectionService;
 
@@ -79,7 +78,6 @@ pub struct CollectionSharingPath {
 }
 
 pub async fn list_shares(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionSharingPath,
@@ -87,11 +85,6 @@ pub async fn list_shares(
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        let location_value = format!("{}/collections/{}/sharing", config.base_url, new_name)
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
-        headers.insert(header::LOCATION, location_value);
         return Err(AppError::NotFound(format!(
             "Collection moved to {}",
             new_name
@@ -116,7 +109,6 @@ fn list_shares_docs(op: TransformOperation) -> TransformOperation {
 }
 
 pub async fn add_share(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionSharingPath,
@@ -125,11 +117,6 @@ pub async fn add_share(
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        let location_value = format!("{}/collections/{}/sharing", config.base_url, new_name)
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
-        headers.insert(header::LOCATION, location_value);
         return Err(AppError::NotFound(format!(
             "Collection moved to {}",
             new_name
@@ -169,7 +156,6 @@ pub struct SharePrincipalPath {
 }
 
 pub async fn remove_share(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: SharePrincipalPath,
@@ -177,11 +163,6 @@ pub async fn remove_share(
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        let location_value = format!("{}/collections/{}/sharing/{}", config.base_url, new_name, path.principal)
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
-        headers.insert(header::LOCATION, location_value);
         return Err(AppError::NotFound(format!(
             "Collection moved to {}",
             new_name

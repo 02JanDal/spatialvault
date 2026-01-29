@@ -149,11 +149,6 @@ pub async fn get_tileset(
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        let location_value = format!("{}/collections/{}/tiles", config.base_url, new_name)
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
-        headers.insert(header::LOCATION, location_value);
         return Err(AppError::NotFound(format!(
             "Collection moved to {}",
             new_name
@@ -280,7 +275,7 @@ pub struct TilePath {
 
 /// Get a single tile
 pub async fn get_tile(
-    Extension(config): Extension<Arc<Config>>,
+    Extension(_config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State((service, collection_service)): State<(Arc<TileService>, Arc<CollectionService>)>,
     path: TilePath,
@@ -290,12 +285,6 @@ pub async fn get_tile(
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
-        let mut redirect_headers = HeaderMap::new();
-        let location_value = format!("{}/collections/{}/tiles/{}/{}/{}/{}",
-            config.base_url, new_name, path.tile_matrix_set_id, path.z, path.y, path.x)
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
-        redirect_headers.insert(header::LOCATION, location_value);
         return Err(AppError::NotFound(format!(
             "Collection moved to {}",
             new_name

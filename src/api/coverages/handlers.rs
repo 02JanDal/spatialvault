@@ -119,11 +119,6 @@ pub async fn get_coverage(
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        let location_value = format!("{}/collections/{}/coverage", config.base_url, new_name)
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
-        headers.insert(header::LOCATION, location_value);
         return Err(AppError::NotFound(format!(
             "Collection moved to {}",
             new_name
@@ -201,7 +196,7 @@ pub struct CoverageDomainsetPath {
 
 /// Get domain set
 pub async fn get_domainset(
-    Extension(config): Extension<Arc<Config>>,
+    Extension(_config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State((service, collection_service)): State<(Arc<CoverageService>, Arc<CollectionService>)>,
     path: CoverageDomainsetPath,
@@ -209,11 +204,6 @@ pub async fn get_domainset(
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        let location_value = format!("{}/collections/{}/coverage/domainset", config.base_url, new_name)
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
-        headers.insert(header::LOCATION, location_value);
         return Err(AppError::NotFound(format!(
             "Collection moved to {}",
             new_name
@@ -246,7 +236,7 @@ pub struct CoverageRangetypePath {
 
 /// Get range type
 pub async fn get_rangetype(
-    Extension(config): Extension<Arc<Config>>,
+    Extension(_config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State((service, collection_service)): State<(Arc<CoverageService>, Arc<CollectionService>)>,
     path: CoverageRangetypePath,
@@ -254,11 +244,6 @@ pub async fn get_rangetype(
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        let location_value = format!("{}/collections/{}/coverage/rangetype", config.base_url, new_name)
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
-        headers.insert(header::LOCATION, location_value);
         return Err(AppError::NotFound(format!(
             "Collection moved to {}",
             new_name
