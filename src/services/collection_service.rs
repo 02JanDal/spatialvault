@@ -596,6 +596,10 @@ impl CollectionService {
             );
 
             // Properties field (JSONB) - note: individual properties within are queryable via CQL2
+            // The top-level "properties" field is exposed as a generic "object" type.
+            // Individual nested fields within properties can still be queried using CQL2
+            // property paths (e.g., properties.name, properties.height), but the schema
+            // doesn't enumerate them since JSONB structure can vary per feature.
             properties.insert(
                 "properties".to_string(),
                 serde_json::json!({

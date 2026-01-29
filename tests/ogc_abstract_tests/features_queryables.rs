@@ -129,17 +129,17 @@ async fn collection_links_to_queryables() {
     let has_queryables_link = links.iter().any(|link| {
         link.get("rel")
             .and_then(|r| r.as_str())
-            .map(|r| r.contains("queryables"))
+            .map(|r| r == "http://www.opengis.net/def/rel/ogc/1.0/queryables")
             .unwrap_or(false)
     });
 
-    assert!(has_queryables_link, "Collection should have link to queryables");
+    assert!(has_queryables_link, "Collection should have link to queryables with correct rel type");
 
     // Verify the link points to the correct endpoint
     let queryables_link = links.iter().find(|link| {
         link.get("rel")
             .and_then(|r| r.as_str())
-            .map(|r| r.contains("queryables"))
+            .map(|r| r == "http://www.opengis.net/def/rel/ogc/1.0/queryables")
             .unwrap_or(false)
     });
 
