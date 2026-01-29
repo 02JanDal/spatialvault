@@ -22,7 +22,7 @@ use crate::api::common::{media_type, rel, Link};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::{AppError, AppResult};
-use crate::services::TileService;
+use crate::services::{CollectionService, TileService};
 
 /// Query parameters for tile requests
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -143,10 +143,23 @@ pub struct CollectionTilesPath {
 pub async fn get_tileset(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<TileService>>,
+    State((service, collection_service)): State<(Arc<TileService>, Arc<CollectionService>)>,
     path: CollectionTilesPath,
 ) -> AppResult<Json<TilesetMetadata>> {
     let collection_id = path.collection_id;
+    // Check for alias redirect (only if no active collection with this exact name exists)
+    if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
+        let mut headers = HeaderMap::new();
+        let location_value = format!("{}/collections/{}/tiles", config.base_url, new_name)
+            .parse()
+            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
+        headers.insert(header::LOCATION, location_value);
+        return Err(AppError::NotFound(format!(
+            "Collection moved to {}",
+            new_name
+        )));
+    }
+
     let collection = service
         .get_collection(&user.username, &collection_id)
         .await?
@@ -267,13 +280,28 @@ pub struct TilePath {
 
 /// Get a single tile
 pub async fn get_tile(
+    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<TileService>>,
+    State((service, collection_service)): State<(Arc<TileService>, Arc<CollectionService>)>,
     path: TilePath,
     Query(params): Query<TileQueryParams>,
     headers: HeaderMap,
 ) -> AppResult<Response> {
     let collection_id = path.collection_id;
+    // Check for alias redirect (only if no active collection with this exact name exists)
+    if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
+        let mut redirect_headers = HeaderMap::new();
+        let location_value = format!("{}/collections/{}/tiles/{}/{}/{}/{}",
+            config.base_url, new_name, path.tile_matrix_set_id, path.z, path.y, path.x)
+            .parse()
+            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?;
+        redirect_headers.insert(header::LOCATION, location_value);
+        return Err(AppError::NotFound(format!(
+            "Collection moved to {}",
+            new_name
+        )));
+    }
+
     let tile_matrix_set_id = path.tile_matrix_set_id;
     let z = path.z;
     let y = path.y;
@@ -356,7 +384,7 @@ fn get_tile_docs(op: TransformOperation) -> TransformOperation {
         .response_with::<404, (), _>(|res| res.description("Collection or tile not found"))
 }
 
-pub fn routes(service: Arc<TileService>) -> ApiRouter {
+pub fn routes(service: Arc<TileService>, collection_service: Arc<CollectionService>) -> ApiRouter {
     ApiRouter::new()
         .api_route("/tileMatrixSets", get_with(list_tile_matrix_sets, list_tile_matrix_sets_docs))
         .api_route("/collections/{collection_id}/tiles", get_with(get_tileset, get_tileset_docs))
@@ -364,5 +392,5 @@ pub fn routes(service: Arc<TileService>) -> ApiRouter {
             "/collections/{collection_id}/tiles/{tile_matrix_set_id}/{z}/{y}/{x}",
             get_with(get_tile, get_tile_docs),
         )
-        .with_state(service)
+        .with_state((service, collection_service))
 }
