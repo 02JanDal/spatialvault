@@ -244,24 +244,19 @@ pub async fn create_collection(
         .await?;
 
     let base_url = &config.base_url;
-    let id = &collection.canonical_name;
 
-    let response = CollectionResponse {
-        id: id.clone(),
-        title: collection.title.clone(),
-        description: collection.description.clone(),
-        links: vec![
-            Link::new(format!("{}/collections/{}", base_url, id), rel::SELF)
-                .with_type(media_type::JSON),
-        ],
-        extent: None,
-        item_type: Some("feature".to_string()),
-        crs: Some(vec![crs::srid_to_uri(request.crs)]),
-        storage_crs: Some(crs::srid_to_uri(request.crs)),
-    };
+    // Build response using the common helper to ensure consistency
+    // Include extent and storage_crs based on the request CRS
+    let response = build_collection_response(
+        &collection,
+        base_url,
+        None,  // extent not computed for create response
+        Some(request.crs),  // storage_crs from request
+        true,  // include all links for consistency
+    );
 
     let mut headers = HeaderMap::new();
-    let location_value = format!("{}/collections/{}", base_url, id)
+    let location_value = format!("{}/collections/{}", base_url, &collection.canonical_name)
         .parse()
         .map_err(|_| AppError::Internal("Invalid location URL".to_string()))?;
     headers.insert(header::LOCATION, location_value);
@@ -317,21 +312,15 @@ pub async fn patch_collection(
         .await?;
 
     let base_url = &config.base_url;
-    let id = &collection.canonical_name;
 
-    let response = CollectionResponse {
-        id: id.clone(),
-        title: collection.title.clone(),
-        description: collection.description.clone(),
-        links: vec![
-            Link::new(format!("{}/collections/{}", base_url, id), rel::SELF)
-                .with_type(media_type::JSON),
-        ],
-        extent: None,
-        item_type: Some("feature".to_string()),
-        crs: None,
-        storage_crs: None,
-    };
+    // Build response using the common helper to ensure consistency
+    let response = build_collection_response(
+        &collection,
+        base_url,
+        None,  // extent not computed for patch response
+        None,  // storage_crs not computed for patch response
+        true,  // include all links for consistency
+    );
 
     let mut response_headers = HeaderMap::new();
     let etag_value = format!("\"{}\"", collection.version)
@@ -398,21 +387,15 @@ pub async fn update_collection(
         .await?;
 
     let base_url = &config.base_url;
-    let id = &collection.canonical_name;
 
-    let response = CollectionResponse {
-        id: id.clone(),
-        title: collection.title.clone(),
-        description: collection.description.clone(),
-        links: vec![
-            Link::new(format!("{}/collections/{}", base_url, id), rel::SELF)
-                .with_type(media_type::JSON),
-        ],
-        extent: None,
-        item_type: Some("feature".to_string()),
-        crs: None,
-        storage_crs: None,
-    };
+    // Build response using the common helper to ensure consistency
+    let response = build_collection_response(
+        &collection,
+        base_url,
+        None,  // extent not computed for put response
+        None,  // storage_crs not computed for put response
+        true,  // include all links for consistency
+    );
 
     let mut response_headers = HeaderMap::new();
     let etag_value = format!("\"{}\"", collection.version)
