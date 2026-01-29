@@ -8,14 +8,11 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY .ca-certificate[s].crt* /tmp/
-RUN if [ -f /tmp/.ca-certificates.crt ]; then \
-        cp /tmp/.ca-certificates.crt /usr/local/share/ca-certificates/custom-ca.crt; \
-    fi && \
-    update-ca-certificates
-
 COPY Cargo.toml Cargo.lock ./
 
+# Build dependencies in a separate layer for caching
+# This creates a dummy main.rs to allow cargo to compile dependencies
+# The dependencies will be cached and reused when only source code changes
 RUN mkdir src && echo "fn main() {}" > src/main.rs && \
     cargo build --release && \
     rm -rf src
