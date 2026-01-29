@@ -26,12 +26,18 @@ use crate::services::CollectionService;
 
 /// Helper function to build a CollectionResponse from a Collection
 /// This ensures consistent structure between list and get endpoints
+/// by using the same link building logic.
+/// 
+/// Both endpoints now include all links (self, items, parent, schema, type-specific)
+/// as per OGC API Features specification for consistency.
+/// The main difference is that extent and storage_crs are computed on-demand
+/// for the detail endpoint only, to avoid performance overhead on list operations.
 fn build_collection_response(
     collection: &Collection,
     base_url: &str,
     extent: Option<Extent>,
     storage_crs: Option<i32>,
-    include_all_links: bool,
+    include_extended_links: bool,
 ) -> CollectionResponse {
     let id = &collection.canonical_name;
     
@@ -43,8 +49,9 @@ fn build_collection_response(
             .with_type(media_type::GEOJSON),
     ];
     
-    // Add additional links if requested (for detail view or list view)
-    if include_all_links {
+    // Add extended links for complete collection metadata
+    // Both list and detail endpoints now include these for consistency
+    if include_extended_links {
         // Parent link back to collections list
         links.push(
             Link::new(format!("{}/collections", base_url), rel::PARENT)
@@ -109,8 +116,8 @@ pub async fn list_collections(
     let collection_responses: Vec<CollectionResponse> = collections
         .iter()
         .map(|c| {
-            // For list endpoint, we include all links but not computed extent/storage_crs
-            // to avoid performance overhead
+            // Include all links to synchronize with detail endpoint response structure,
+            // but skip extent/storage_crs computation to avoid performance overhead
             build_collection_response(c, base_url, None, None, true)
         })
         .collect();
