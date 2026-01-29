@@ -30,6 +30,14 @@ pub mod classes {
         "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson";
     pub const FEATURES_OAS30: &str = "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/oas30";
     pub const FEATURES_CRS: &str = "http://www.opengis.net/spec/ogcapi-features-2/1.0/conf/crs";
+    
+    // OGC API Features Part 4 - CRUD
+    pub const FEATURES_CREATE_REPLACE_DELETE: &str =
+        "http://www.opengis.net/spec/ogcapi-features-4/1.0/conf/create-replace-delete";
+    pub const FEATURES_UPDATE: &str =
+        "http://www.opengis.net/spec/ogcapi-features-4/1.0/conf/update";
+    pub const FEATURES_OPTIMISTIC_LOCKING_ETAGS: &str =
+        "http://www.opengis.net/spec/ogcapi-features-4/1.0/conf/optimistic-locking-etags";
 
     // OGC API Tiles
     pub const TILES_CORE: &str = "http://www.opengis.net/spec/ogcapi-tiles-1/1.0/conf/core";
@@ -83,6 +91,10 @@ async fn get_conformance() -> Json<Conformance> {
             classes::FEATURES_GEOJSON.to_string(),
             classes::FEATURES_OAS30.to_string(),
             classes::FEATURES_CRS.to_string(),
+            // OGC API Features Part 4 - CRUD
+            classes::FEATURES_CREATE_REPLACE_DELETE.to_string(),
+            classes::FEATURES_UPDATE.to_string(),
+            classes::FEATURES_OPTIMISTIC_LOCKING_ETAGS.to_string(),
             // OGC API Tiles
             classes::TILES_CORE.to_string(),
             classes::TILES_TILESET.to_string(),
