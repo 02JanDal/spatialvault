@@ -30,6 +30,8 @@ pub mod classes {
         "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson";
     pub const FEATURES_OAS30: &str = "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/oas30";
     pub const FEATURES_CRS: &str = "http://www.opengis.net/spec/ogcapi-features-2/1.0/conf/crs";
+    pub const FEATURES_QUERYABLES: &str =
+        "http://www.opengis.net/spec/ogcapi-features-3/1.0/conf/queryables";
 
     // OGC API Tiles
     pub const TILES_CORE: &str = "http://www.opengis.net/spec/ogcapi-tiles-1/1.0/conf/core";
@@ -83,6 +85,7 @@ async fn get_conformance() -> Json<Conformance> {
             classes::FEATURES_GEOJSON.to_string(),
             classes::FEATURES_OAS30.to_string(),
             classes::FEATURES_CRS.to_string(),
+            classes::FEATURES_QUERYABLES.to_string(),
             // OGC API Tiles
             classes::TILES_CORE.to_string(),
             classes::TILES_TILESET.to_string(),

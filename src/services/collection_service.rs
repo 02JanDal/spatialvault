@@ -562,6 +562,137 @@ impl CollectionService {
         Ok(schema)
     }
 
+    pub async fn get_collection_queryables(
+        &self,
+        username: &str,
+        collection_id: &str,
+    ) -> AppResult<CollectionSchema> {
+        let collection = self
+            .get_collection(username, collection_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+
+        // For raster/pointcloud collections, use items table properties
+        if collection.collection_type == "raster" || collection.collection_type == "pointcloud" {
+            // Items have: geometry, datetime, properties (JSONB)
+            let mut properties = serde_json::Map::new();
+
+            // Geometry is always queryable
+            properties.insert(
+                "geometry".to_string(),
+                serde_json::json!({
+                    "type": "object",
+                    "description": "GeoJSON geometry"
+                }),
+            );
+
+            // Datetime is queryable
+            properties.insert(
+                "datetime".to_string(),
+                serde_json::json!({
+                    "type": "string",
+                    "format": "date-time"
+                }),
+            );
+
+            // Properties field (JSONB) - note: individual properties within are queryable via CQL2
+            // The top-level "properties" field is exposed as a generic "object" type.
+            // Individual nested fields within properties can still be queried using CQL2
+            // property paths (e.g., properties.name, properties.height), but the schema
+            // doesn't enumerate them since JSONB structure can vary per feature.
+            properties.insert(
+                "properties".to_string(),
+                serde_json::json!({
+                    "type": "object",
+                    "description": "Feature properties"
+                }),
+            );
+
+            let schema = CollectionSchema {
+                schema: "https://json-schema.org/draft/2020-12/schema".to_string(),
+                id: format!("/collections/{}/queryables", collection_id),
+                schema_type: "object".to_string(),
+                title: format!("{} - Queryables", collection.title),
+                properties: serde_json::Value::Object(properties),
+                required: None,
+            };
+
+            return Ok(schema);
+        }
+
+        // For vector collections, introspect the table columns
+        // Get column information from PostgreSQL
+        let columns: Vec<(String, String, String, Option<i32>)> = sqlx::query_as(
+            r#"
+            SELECT
+                c.column_name,
+                c.data_type,
+                c.is_nullable,
+                CASE WHEN c.data_type = 'USER-DEFINED' THEN
+                    (SELECT srid FROM geometry_columns
+                     WHERE f_table_schema = $1 AND f_table_name = $2 AND f_geometry_column = c.column_name)
+                ELSE NULL END as srid
+            FROM information_schema.columns c
+            WHERE c.table_schema = $1 AND c.table_name = $2
+            ORDER BY c.ordinal_position
+            "#,
+        )
+        .bind(&collection.schema_name)
+        .bind(&collection.table_name)
+        .fetch_all(self.db.pool())
+        .await?;
+
+        // Build JSON Schema properties - exclude system columns
+        let mut properties = serde_json::Map::new();
+        let system_columns = ["id", "version", "created_at", "updated_at"];
+
+        for (column_name, data_type, _is_nullable, srid) in columns {
+            // Skip system columns that aren't typically queryable
+            if system_columns.contains(&column_name.as_str()) {
+                continue;
+            }
+
+            let column_schema = match data_type.as_str() {
+                "uuid" => serde_json::json!({ "type": "string", "format": "uuid" }),
+                "text" | "character varying" => serde_json::json!({ "type": "string" }),
+                "integer" | "bigint" | "smallint" => serde_json::json!({ "type": "integer" }),
+                "real" | "double precision" | "numeric" => serde_json::json!({ "type": "number" }),
+                "boolean" => serde_json::json!({ "type": "boolean" }),
+                "timestamp with time zone" | "timestamp without time zone" => {
+                    serde_json::json!({ "type": "string", "format": "date-time" })
+                }
+                "date" => serde_json::json!({ "type": "string", "format": "date" }),
+                "jsonb" | "json" => serde_json::json!({ "type": "object" }),
+                "USER-DEFINED" => {
+                    // This is likely a geometry column
+                    let mut geom_schema = serde_json::json!({
+                        "type": "object",
+                        "description": "GeoJSON geometry"
+                    });
+                    if let Some(s) = srid {
+                        geom_schema["x-srid"] = serde_json::json!(s);
+                    }
+                    geom_schema
+                }
+                "ARRAY" => serde_json::json!({ "type": "array" }),
+                _ => serde_json::json!({ "type": "string" }),
+            };
+
+            properties.insert(column_name, column_schema);
+        }
+
+        let schema = CollectionSchema {
+            schema: "https://json-schema.org/draft/2020-12/schema".to_string(),
+            id: format!("/collections/{}/queryables", collection_id),
+            schema_type: "object".to_string(),
+            title: format!("{} - Queryables", collection.title),
+            properties: serde_json::Value::Object(properties),
+            required: None, // Queryables don't typically declare required fields
+        };
+
+        Ok(schema)
+    }
+
     pub async fn list_shares(
         &self,
         username: &str,
