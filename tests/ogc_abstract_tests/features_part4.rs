@@ -6,6 +6,7 @@
 //! - http://www.opengis.net/spec/ogcapi-features-4/1.0/conf/optimistic-locking-etags
 
 use crate::common::TestApp;
+use spatialvault::api::conformance::classes;
 
 /// Test that conformance declaration includes create-replace-delete class
 #[tokio::test]
@@ -22,7 +23,7 @@ async fn test_conformance_includes_create_replace_delete() {
 
     let has_create_replace_delete = conforms_to.iter().any(|c| {
         c.as_str()
-            .map(|s| s == "http://www.opengis.net/spec/ogcapi-features-4/1.0/conf/create-replace-delete")
+            .map(|s| s == classes::FEATURES_CREATE_REPLACE_DELETE)
             .unwrap_or(false)
     });
 
@@ -47,7 +48,7 @@ async fn test_conformance_includes_update() {
 
     let has_update = conforms_to.iter().any(|c| {
         c.as_str()
-            .map(|s| s == "http://www.opengis.net/spec/ogcapi-features-4/1.0/conf/update")
+            .map(|s| s == classes::FEATURES_UPDATE)
             .unwrap_or(false)
     });
 
@@ -72,7 +73,7 @@ async fn test_conformance_includes_optimistic_locking_etags() {
 
     let has_optimistic_locking = conforms_to.iter().any(|c| {
         c.as_str()
-            .map(|s| s == "http://www.opengis.net/spec/ogcapi-features-4/1.0/conf/optimistic-locking-etags")
+            .map(|s| s == classes::FEATURES_OPTIMISTIC_LOCKING_ETAGS)
             .unwrap_or(false)
     });
 
