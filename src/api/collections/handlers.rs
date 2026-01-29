@@ -17,11 +17,82 @@ use super::schemas::{
     CollectionResponse, CollectionSchema, CollectionsResponse, CreateCollectionRequest,
     ListCollectionsParams, UpdateCollectionRequest,
 };
-use crate::api::common::{crs, media_type, rel, Link};
+use crate::api::common::{crs, media_type, rel, Extent, Link};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
+use crate::db::Collection;
 use crate::error::{AppError, AppResult};
 use crate::services::CollectionService;
+
+/// Helper function to build a CollectionResponse from a Collection
+/// This ensures consistent structure between list and get endpoints
+fn build_collection_response(
+    collection: &Collection,
+    base_url: &str,
+    extent: Option<Extent>,
+    storage_crs: Option<i32>,
+    include_all_links: bool,
+) -> CollectionResponse {
+    let id = &collection.canonical_name;
+    
+    // Base links that always appear
+    let mut links = vec![
+        Link::new(format!("{}/collections/{}", base_url, id), rel::SELF)
+            .with_type(media_type::JSON),
+        Link::new(format!("{}/collections/{}/items", base_url, id), rel::ITEMS)
+            .with_type(media_type::GEOJSON),
+    ];
+    
+    // Add additional links if requested (for detail view or list view)
+    if include_all_links {
+        // Parent link back to collections list
+        links.push(
+            Link::new(format!("{}/collections", base_url), rel::PARENT)
+                .with_type(media_type::JSON),
+        );
+        
+        // Add type-specific links
+        match collection.collection_type.as_str() {
+            "vector" => {
+                links.push(
+                    Link::new(format!("{}/collections/{}/tiles", base_url, id), "tiles")
+                        .with_type(media_type::JSON),
+                );
+            }
+            "raster" => {
+                links.push(
+                    Link::new(
+                        format!("{}/collections/{}/coverage", base_url, id),
+                        "coverage",
+                    )
+                    .with_type(media_type::JSON),
+                );
+            }
+            _ => {}
+        }
+        
+        // Add schema link
+        links.push(
+            Link::new(
+                format!("{}/collections/{}/schema", base_url, id),
+                "describedby",
+            )
+            .with_type(media_type::JSON)
+            .with_title("Schema for this collection"),
+        );
+    }
+    
+    CollectionResponse {
+        id: id.clone(),
+        title: collection.title.clone(),
+        description: collection.description.clone(),
+        links,
+        extent,
+        item_type: Some("feature".to_string()),
+        crs: Some(vec![crs::WGS84.to_string(), crs::EPSG_3857.to_string()]),
+        storage_crs: storage_crs.map(|srid| crs::srid_to_uri(srid)),
+    }
+}
 
 pub async fn list_collections(
     Extension(config): Extension<Arc<Config>>,
@@ -36,24 +107,11 @@ pub async fn list_collections(
     let base_url = &config.base_url;
 
     let collection_responses: Vec<CollectionResponse> = collections
-        .into_iter()
+        .iter()
         .map(|c| {
-            let id = &c.canonical_name;
-            CollectionResponse {
-                id: id.clone(),
-                title: c.title.clone(),
-                description: c.description.clone(),
-                links: vec![
-                    Link::new(format!("{}/collections/{}", base_url, id), rel::SELF)
-                        .with_type(media_type::JSON),
-                    Link::new(format!("{}/collections/{}/items", base_url, id), rel::ITEMS)
-                        .with_type(media_type::GEOJSON),
-                ],
-                extent: None, // Computed on demand
-                item_type: Some("feature".to_string()),
-                crs: Some(vec![crs::WGS84.to_string(), crs::EPSG_3857.to_string()]),
-                storage_crs: None, // Derived from geometry column
-            }
+            // For list endpoint, we include all links but not computed extent/storage_crs
+            // to avoid performance overhead
+            build_collection_response(c, base_url, None, None, true)
         })
         .collect();
 
@@ -117,56 +175,9 @@ pub async fn get_collection(
     let storage_crs = service.get_storage_crs(&collection).await?;
 
     let base_url = &config.base_url;
-    let id = &collection.canonical_name;
 
-    let mut links = vec![
-        Link::new(format!("{}/collections/{}", base_url, id), rel::SELF)
-            .with_type(media_type::JSON),
-        Link::new(format!("{}/collections/{}/items", base_url, id), rel::ITEMS)
-            .with_type(media_type::GEOJSON),
-        Link::new(format!("{}/collections", base_url), rel::PARENT).with_type(media_type::JSON),
-    ];
-
-    // Add type-specific links
-    match collection.collection_type.as_str() {
-        "vector" => {
-            links.push(
-                Link::new(format!("{}/collections/{}/tiles", base_url, id), "tiles")
-                    .with_type(media_type::JSON),
-            );
-        }
-        "raster" => {
-            links.push(
-                Link::new(
-                    format!("{}/collections/{}/coverage", base_url, id),
-                    "coverage",
-                )
-                .with_type(media_type::JSON),
-            );
-        }
-        _ => {}
-    }
-
-    // Add schema link
-    links.push(
-        Link::new(
-            format!("{}/collections/{}/schema", base_url, id),
-            "describedby",
-        )
-        .with_type(media_type::JSON)
-        .with_title("Schema for this collection"),
-    );
-
-    let response = CollectionResponse {
-        id: id.clone(),
-        title: collection.title.clone(),
-        description: collection.description.clone(),
-        links,
-        extent,
-        item_type: Some("feature".to_string()),
-        crs: Some(vec![crs::WGS84.to_string(), crs::EPSG_3857.to_string()]),
-        storage_crs: storage_crs.map(|srid| crs::srid_to_uri(srid)),
-    };
+    // Build the response using the common helper, with all links included
+    let response = build_collection_response(&collection, base_url, extent, storage_crs, true);
 
     // Create ETag from version
     let etag = format!("\"{}\"", collection.version);
