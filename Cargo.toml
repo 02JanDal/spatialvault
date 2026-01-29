@@ -1,0 +1,73 @@
+[package]
+name = "spatialvault"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+gdal-support = ["dep:gdal"]
+
+[dependencies]
+# Web framework
+axum = { version = "0.8", features = ["macros"] }
+axum-extra = { version = "0.10", features = ["typed-header", "typed-routing"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+tokio = { version = "1", features = ["full"] }
+
+# OpenAPI generation
+aide = { version = "0.15", features = ["axum", "axum-extra", "axum-json", "axum-query", "axum-extra-typed-routing", "redoc", "scalar", "macros"] }
+aide-macros = "0.15"
+schemars = { version = "0.9", features = ["uuid1"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }
+
+# Auth
+openidconnect = "4"
+jsonwebtoken = "9"
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.143"
+
+# Geospatial
+geo = "0.31.0"
+geozero = { version = "0.14.0", features = ["with-postgis-sqlx", "with-geojson", "with-mvt"] }
+cql2 = "0.4"
+
+# Object storage
+object_store = { version = "0.11", features = ["aws"] }
+
+# GDAL bindings (for COG/COPC conversion) - optional, enable with `gdal-support` feature
+gdal = { version = "0.17", optional = true, features = ["bindgen"] }
+
+# Image encoding for raster tiles (PNG, JPEG, WebP)
+png = "0.17"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# Base64 encoding/decoding
+base64 = "0.22"
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2.0.16"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+config = "0.14"
+url = "2"
+bytes = "1"
+futures = "0.3"
+async-trait = "0.1"
+indexmap = "2.13.0"
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
+tower = { version = "0.5", features = ["util"] }
+hyper = "1.0"
+http-body-util = "0.1"
