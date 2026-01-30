@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::api::collections::schemas::CollectionSchema;
 use crate::api::collections::sharing::{PermissionLevel, ShareEntry};
 use crate::api::common::{Bbox, Extent, SpatialExtent, TemporalExtent};
-use crate::auth::{is_valid_role_name, quote_ident, RoleManager};
+use crate::auth::{RoleManager, is_valid_role_name, quote_ident};
 use crate::db::{Collection, CollectionWithCrs, Database};
 use crate::error::{AppError, AppResult};
 

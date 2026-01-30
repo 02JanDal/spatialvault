@@ -17,7 +17,7 @@ use super::schemas::{
     CollectionResponse, CollectionSchema, CollectionsResponse, CreateCollectionRequest,
     ListCollectionsParams, UpdateCollectionRequest,
 };
-use crate::api::common::{crs, media_type, rel, Extent, Link};
+use crate::api::common::{Extent, Link, crs, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::db::Collection;
@@ -27,7 +27,7 @@ use crate::services::CollectionService;
 /// Helper function to build a CollectionResponse from a Collection
 /// This ensures consistent structure between list and get endpoints
 /// by using the same link building logic.
-/// 
+///
 /// The link structure differs between list and detail views:
 /// - List: self, items, tiles/coverage (type-specific)
 /// - Detail: self, items, parent, tiles/coverage, schema
@@ -39,7 +39,7 @@ fn build_collection_response(
     include_extended_links: bool,
 ) -> CollectionResponse {
     let id = &collection.canonical_name;
-    
+
     // Base links that always appear
     let mut links = vec![
         Link::new(format!("{}/collections/{}", base_url, id), rel::SELF)
@@ -47,7 +47,7 @@ fn build_collection_response(
         Link::new(format!("{}/collections/{}/items", base_url, id), rel::ITEMS)
             .with_type(media_type::GEOJSON),
     ];
-    
+
     // Add type-specific links (always included for both list and detail)
     match collection.collection_type.as_str() {
         "vector" => {
@@ -67,15 +67,14 @@ fn build_collection_response(
         }
         _ => {}
     }
-    
+
     // Add extended links for detail view (parent and schema)
     if include_extended_links {
         // Parent link back to collections list
         links.push(
-            Link::new(format!("{}/collections", base_url), rel::PARENT)
-                .with_type(media_type::JSON),
+            Link::new(format!("{}/collections", base_url), rel::PARENT).with_type(media_type::JSON),
         );
-        
+
         // Add schema link
         links.push(
             Link::new(
@@ -86,7 +85,7 @@ fn build_collection_response(
             .with_title("Schema for this collection"),
         );
     }
-    
+
     CollectionResponse {
         id: id.clone(),
         title: collection.title.clone(),
@@ -120,7 +119,7 @@ pub async fn list_collections(
             base_url,
             extent,
             c.storage_crs,
-            false,  // List view: don't include parent and schema links
+            false, // List view: don't include parent and schema links
         ));
     }
 
@@ -183,7 +182,13 @@ pub async fn get_collection(
     let base_url = &config.base_url;
 
     // Build the response using the common helper, with all links included
-    let response = build_collection_response(&collection.as_collection(), base_url, extent, collection.storage_crs, true);
+    let response = build_collection_response(
+        &collection.as_collection(),
+        base_url,
+        extent,
+        collection.storage_crs,
+        true,
+    );
 
     // Create ETag from version
     let etag = format!("\"{}\"", collection.version);
@@ -249,9 +254,9 @@ pub async fn create_collection(
     let response = build_collection_response(
         &collection,
         base_url,
-        None,  // extent not computed for create response
-        request.crs,  // storage_crs from request
-        true,  // include all links for consistency
+        None,        // extent not computed for create response
+        request.crs, // storage_crs from request
+        true,        // include all links for consistency
     );
 
     let mut headers = HeaderMap::new();
@@ -318,7 +323,7 @@ pub async fn patch_collection(
 
     // Fetch storage_crs from database
     let storage_crs = service.get_storage_crs(&collection).await?.unwrap_or(4326);
-    
+
     // Compute extent
     let extent = service.compute_extent(&collection).await?;
 
@@ -328,7 +333,7 @@ pub async fn patch_collection(
         base_url,
         extent,
         storage_crs,
-        true,  // include all links for consistency
+        true, // include all links for consistency
     );
 
     let mut response_headers = HeaderMap::new();
@@ -404,7 +409,7 @@ pub async fn update_collection(
 
     // Fetch storage_crs from database
     let storage_crs = service.get_storage_crs(&collection).await?.unwrap_or(4326);
-    
+
     // Compute extent
     let extent = service.compute_extent(&collection).await?;
 
@@ -414,7 +419,7 @@ pub async fn update_collection(
         base_url,
         extent,
         storage_crs,
-        true,  // include all links for consistency
+        true, // include all links for consistency
     );
 
     let mut response_headers = HeaderMap::new();
