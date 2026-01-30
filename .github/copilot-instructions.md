@@ -125,21 +125,14 @@ src/
 │   └── stac/         - STAC API (raster & point cloud metadata)
 ├── auth/          - OAuth2/OIDC authentication and authorization
 ├── config.rs      - Configuration management
-├── db/            - Database layer and queries
-│   ├── PostgreSQL/PostGIS for vector data (user schemas)
-│   └── Metadata tables for collections, items, jobs
+├── db/            - Database layer (PostGIS vector data, metadata tables)
 ├── error.rs       - Error types
 ├── lib.rs         - Library entry point
 ├── main.rs        - Application entry point (Axum server)
 ├── openapi.rs     - OpenAPI documentation setup
 ├── processing/    - Background job processing (worker mode)
-├── services/      - Business logic layer
-│   ├── Features, Tiles, Coverages services
-│   ├── STAC service
-│   └── Jobs/Processes service
-└── storage/       - S3 object storage integration
-    ├── COG raster files
-    └── COPC point cloud files
+├── services/      - Business logic (Features, Tiles, Coverages, STAC, Jobs)
+└── storage/       - S3 object storage (COG raster, COPC point cloud files)
 tests/
 ├── common/        - Test utilities
 ├── integration/   - Integration tests
