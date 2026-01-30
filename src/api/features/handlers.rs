@@ -8,6 +8,7 @@ use aide::{
 use axum::{
     extract::{Extension, Query, State},
     http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use schemars::JsonSchema;
@@ -98,14 +99,18 @@ pub async fn list_features(
     State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
     path: CollectionItemsPath,
     Query(params): Query<FeatureQueryParams>,
-) -> AppResult<(HeaderMap, Json<FeatureCollection>)> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
-        return Err(AppError::NotFound(format!(
-            "Collection moved to {}",
-            new_name
-        )));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/items", config.base_url, new_name)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
     }
 
     params.validate()?;
@@ -188,7 +193,7 @@ pub async fn list_features(
     headers.insert(header::CONTENT_TYPE, media_type::GEOJSON.parse().unwrap());
     headers.insert("Content-Crs", content_crs_header(response_crs).parse().unwrap());
 
-    Ok((headers, Json(collection)))
+    Ok((headers, Json(collection)).into_response())
 }
 
 fn list_features_docs(op: TransformOperation) -> TransformOperation {
@@ -216,14 +221,18 @@ pub async fn get_feature(
     State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
     path: FeaturePath,
     Query(params): Query<FeatureQueryParams>,
-) -> AppResult<(HeaderMap, Json<Feature>)> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
-        return Err(AppError::NotFound(format!(
-            "Collection moved to {}",
-            new_name
-        )));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/items/{}", config.base_url, new_name, path.feature_id)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
     }
 
     let feature_id = path.feature_id;
@@ -264,7 +273,7 @@ pub async fn get_feature(
     headers.insert("Content-Crs", content_crs_header(response_crs).parse().unwrap());
     headers.insert(header::ETAG, format!("\"{}\"", version).parse().unwrap());
 
-    Ok((headers, Json(feature)))
+    Ok((headers, Json(feature)).into_response())
 }
 
 fn get_feature_docs(op: TransformOperation) -> TransformOperation {
@@ -283,14 +292,18 @@ pub async fn create_feature(
     State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
     path: CollectionItemsPath,
     Json(request): Json<CreateFeatureRequest>,
-) -> AppResult<(StatusCode, HeaderMap, Json<Feature>)> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
-        return Err(AppError::NotFound(format!(
-            "Collection moved to {}",
-            new_name
-        )));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/items", config.base_url, new_name)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
     }
 
     // Extract datetime from properties if present
@@ -358,7 +371,7 @@ pub async fn create_feature(
     );
     headers.insert(header::ETAG, format!("\"{}\"", version).parse().unwrap());
 
-    Ok((StatusCode::CREATED, headers, Json(feature)))
+    Ok((StatusCode::CREATED, headers, Json(feature)).into_response())
 }
 
 fn create_feature_docs(op: TransformOperation) -> TransformOperation {
@@ -372,20 +385,24 @@ fn create_feature_docs(op: TransformOperation) -> TransformOperation {
 }
 
 pub async fn update_feature(
-    Extension(_config): Extension<Arc<Config>>,
+    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
     path: FeaturePath,
     headers: HeaderMap,
     Json(request): Json<UpdateFeatureRequest>,
-) -> AppResult<(HeaderMap, Json<Feature>)> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
-        return Err(AppError::NotFound(format!(
-            "Collection moved to {}",
-            new_name
-        )));
+        let mut redirect_headers = HeaderMap::new();
+        redirect_headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/items/{}", config.base_url, new_name, path.feature_id)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, redirect_headers).into_response());
     }
 
     let feature_id = path.feature_id;
@@ -458,7 +475,7 @@ pub async fn update_feature(
     let mut response_headers = HeaderMap::new();
     response_headers.insert(header::ETAG, format!("\"{}\"", new_version).parse().unwrap());
 
-    Ok((response_headers, Json(feature)))
+    Ok((response_headers, Json(feature)).into_response())
 }
 
 fn update_feature_docs(op: TransformOperation) -> TransformOperation {
@@ -473,20 +490,24 @@ fn update_feature_docs(op: TransformOperation) -> TransformOperation {
 }
 
 pub async fn replace_feature(
-    Extension(_config): Extension<Arc<Config>>,
+    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
     path: FeaturePath,
     headers: HeaderMap,
     Json(request): Json<CreateFeatureRequest>,
-) -> AppResult<(HeaderMap, Json<Feature>)> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
-        return Err(AppError::NotFound(format!(
-            "Collection moved to {}",
-            new_name
-        )));
+        let mut redirect_headers = HeaderMap::new();
+        redirect_headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/items/{}", config.base_url, new_name, path.feature_id)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, redirect_headers).into_response());
     }
 
     let feature_id = path.feature_id;
@@ -559,7 +580,7 @@ pub async fn replace_feature(
     let mut response_headers = HeaderMap::new();
     response_headers.insert(header::ETAG, format!("\"{}\"", new_version).parse().unwrap());
 
-    Ok((response_headers, Json(feature)))
+    Ok((response_headers, Json(feature)).into_response())
 }
 
 fn replace_feature_docs(op: TransformOperation) -> TransformOperation {
@@ -574,19 +595,23 @@ fn replace_feature_docs(op: TransformOperation) -> TransformOperation {
 }
 
 pub async fn delete_feature(
-    Extension(_config): Extension<Arc<Config>>,
+    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
     path: FeaturePath,
     headers: HeaderMap,
-) -> AppResult<StatusCode> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
-        return Err(AppError::NotFound(format!(
-            "Collection moved to {}",
-            new_name
-        )));
+        let mut redirect_headers = HeaderMap::new();
+        redirect_headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/items/{}", config.base_url, new_name, path.feature_id)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, redirect_headers).into_response());
     }
 
     let feature_id = path.feature_id;
@@ -616,7 +641,7 @@ pub async fn delete_feature(
         Err(e) => return Err(e),
     }
 
-    Ok(StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 fn delete_feature_docs(op: TransformOperation) -> TransformOperation {

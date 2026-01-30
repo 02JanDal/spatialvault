@@ -8,6 +8,7 @@ use aide::{
 use axum::{
     extract::{Extension, Query, State},
     http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use std::sync::Arc;
@@ -90,14 +91,18 @@ pub async fn get_collection(
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionPath,
-) -> AppResult<(HeaderMap, Json<CollectionResponse>)> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        return Err(AppError::NotFound(format!(
-            "Collection moved to {}",
-            new_name
-        )));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}", config.base_url, new_name)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
     }
 
     let collection = service
@@ -171,7 +176,7 @@ pub async fn get_collection(
         .map_err(|_| AppError::Internal("Invalid ETag format".to_string()))?;
     headers.insert(header::ETAG, etag_value);
 
-    Ok((headers, Json(response)))
+    Ok((headers, Json(response)).into_response())
 }
 
 fn get_collection_docs(op: TransformOperation) -> TransformOperation {
@@ -452,25 +457,29 @@ pub struct CollectionSchemaPath {
 }
 
 pub async fn get_collection_schema(
-    Extension(_config): Extension<Arc<Config>>,
+    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionSchemaPath,
-) -> AppResult<Json<CollectionSchema>> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
     if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        return Err(AppError::NotFound(format!(
-            "Collection moved to {}",
-            new_name
-        )));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/schema", config.base_url, new_name)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
     }
 
     let schema = service
         .get_collection_schema(&user.username, &collection_id)
         .await?;
 
-    Ok(Json(schema))
+    Ok(Json(schema).into_response())
 }
 
 fn get_collection_schema_docs(op: TransformOperation) -> TransformOperation {
