@@ -400,7 +400,7 @@ impl JobWorker {
                     collection_name, collection.collection_type, collection_type
                 )));
             }
-            return Ok(collection);
+            return Ok(collection.as_collection());
         }
 
         // Create new collection
