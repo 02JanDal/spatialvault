@@ -142,10 +142,16 @@ async fn test_alias_redirect_on_items_endpoint() {
 
     // If rename is supported
     if rename_response.status == StatusCode::OK {
-        // Try to access items with the old name - should get a redirect error (404 with Location header)
+        let renamed: serde_json::Value = rename_response.json();
+        let new_id = renamed["id"].as_str().expect("Should have new id");
+        
+        // Try to access items with the old name - should get a 307 redirect
         let items_response = app.get(&format!("/collections/{}/items", collection_id.split(':').last().unwrap())).await;
-        // The alias should trigger a redirect, which manifests as a 404 with "moved to" message
-        assert_eq!(items_response.status, StatusCode::NOT_FOUND);
+        assert_eq!(items_response.status, StatusCode::TEMPORARY_REDIRECT);
+        
+        // Verify Location header points to the new collection
+        let location = items_response.location().expect("Should have Location header");
+        assert!(location.contains(&new_id), "Location header should point to new collection");
     }
 }
 
@@ -172,9 +178,16 @@ async fn test_alias_redirect_on_schema_endpoint() {
 
     // If rename is supported
     if rename_response.status == StatusCode::OK {
-        // Try to access schema with the old name - should get a redirect error
+        let renamed: serde_json::Value = rename_response.json();
+        let new_id = renamed["id"].as_str().expect("Should have new id");
+        
+        // Try to access schema with the old name - should get a 307 redirect
         let schema_response = app.get(&format!("/collections/{}/schema", collection_id.split(':').last().unwrap())).await;
-        assert_eq!(schema_response.status, StatusCode::NOT_FOUND);
+        assert_eq!(schema_response.status, StatusCode::TEMPORARY_REDIRECT);
+        
+        // Verify Location header points to the new collection
+        let location = schema_response.location().expect("Should have Location header");
+        assert!(location.contains(&new_id), "Location header should point to new collection");
     }
 }
 
@@ -201,9 +214,16 @@ async fn test_alias_redirect_on_tiles_endpoint() {
 
     // If rename is supported
     if rename_response.status == StatusCode::OK {
-        // Try to access tiles with the old name - should get a redirect error
+        let renamed: serde_json::Value = rename_response.json();
+        let new_id = renamed["id"].as_str().expect("Should have new id");
+        
+        // Try to access tiles with the old name - should get a 307 redirect
         let tiles_response = app.get(&format!("/collections/{}/tiles", collection_id.split(':').last().unwrap())).await;
-        assert_eq!(tiles_response.status, StatusCode::NOT_FOUND);
+        assert_eq!(tiles_response.status, StatusCode::TEMPORARY_REDIRECT);
+        
+        // Verify Location header points to the new collection
+        let location = tiles_response.location().expect("Should have Location header");
+        assert!(location.contains(&new_id), "Location header should point to new collection");
     }
 }
 
@@ -230,8 +250,15 @@ async fn test_alias_redirect_on_sharing_endpoint() {
 
     // If rename is supported
     if rename_response.status == StatusCode::OK {
-        // Try to access sharing with the old name - should get a redirect error
+        let renamed: serde_json::Value = rename_response.json();
+        let new_id = renamed["id"].as_str().expect("Should have new id");
+        
+        // Try to access sharing with the old name - should get a 307 redirect
         let sharing_response = app.get(&format!("/collections/{}/sharing", collection_id.split(':').last().unwrap())).await;
-        assert_eq!(sharing_response.status, StatusCode::NOT_FOUND);
+        assert_eq!(sharing_response.status, StatusCode::TEMPORARY_REDIRECT);
+        
+        // Verify Location header points to the new collection
+        let location = sharing_response.location().expect("Should have Location header");
+        assert!(location.contains(&new_id), "Location header should point to new collection");
     }
 }
