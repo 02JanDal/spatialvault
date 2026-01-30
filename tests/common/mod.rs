@@ -302,9 +302,9 @@ impl TestApp {
         let protected_routes = Router::new()
             .merge(collections::handlers::routes(collection_service.clone()))
             .merge(collections::sharing::routes(collection_service.clone()))
-            .merge(features::handlers::routes(feature_service))
-            .merge(tiles::handlers::routes(tile_service))
-            .merge(coverages::handlers::routes(coverage_service))
+            .merge(features::handlers::routes(feature_service, collection_service.clone()))
+            .merge(tiles::handlers::routes(tile_service, collection_service.clone()))
+            .merge(coverages::handlers::routes(coverage_service, collection_service.clone()))
             .merge(processes::handlers::routes(process_service))
             .merge(stac::item::routes(stac_service))
             .layer(middleware::from_fn_with_state(mock_auth, mock_auth_middleware));
