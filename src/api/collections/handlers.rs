@@ -36,7 +36,7 @@ fn build_collection_response(
     collection: &Collection,
     base_url: &str,
     extent: Option<Extent>,
-    storage_crs: Option<i32>,
+    storage_crs: i32,
     include_extended_links: bool,
 ) -> CollectionResponse {
     let id = &collection.canonical_name;
@@ -97,7 +97,7 @@ fn build_collection_response(
         extent,
         item_type: Some("feature".to_string()),
         crs: Some(vec![crs::WGS84.to_string(), crs::EPSG_3857.to_string()]),
-        storage_crs: storage_crs.map(|srid| crs::srid_to_uri(srid)),
+        storage_crs: Some(crs::srid_to_uri(storage_crs)),
     }
 }
 
@@ -113,17 +113,18 @@ pub async fn list_collections(
 
     let base_url = &config.base_url;
 
-    // Batch fetch extent and storage_crs for all collections to avoid N+1 queries
-    let metadata = service.get_collection_metadata_batch(&collections).await?;
-
-    let collection_responses: Vec<CollectionResponse> = collections
-        .iter()
-        .zip(metadata.iter())
-        .map(|(c, (extent, storage_crs))| {
-            // Include all links and metadata for consistency with detail endpoint
-            build_collection_response(c, base_url, extent.clone(), *storage_crs, true)
-        })
-        .collect();
+    // Compute extent for each collection
+    let mut collection_responses = Vec::with_capacity(collections.len());
+    for c in collections.iter() {
+        let extent = service.compute_extent(&c.as_collection()).await?;
+        collection_responses.push(build_collection_response(
+            &c.as_collection(),
+            base_url,
+            extent,
+            c.storage_crs,
+            true,
+        ));
+    }
 
     let response = CollectionsResponse {
         collections: collection_responses,
@@ -179,15 +180,12 @@ pub async fn get_collection(
         .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
 
     // Get computed extent
-    let extent = service.compute_extent(&collection).await?;
-
-    // Get storage CRS
-    let storage_crs = service.get_storage_crs(&collection).await?;
+    let extent = service.compute_extent(&collection.as_collection()).await?;
 
     let base_url = &config.base_url;
 
     // Build the response using the common helper, with all links included
-    let response = build_collection_response(&collection, base_url, extent, storage_crs, true);
+    let response = build_collection_response(&collection.as_collection(), base_url, extent, collection.storage_crs, true);
 
     // Create ETag from version
     let etag = format!("\"{}\"", collection.version);
@@ -254,7 +252,7 @@ pub async fn create_collection(
         &collection,
         base_url,
         None,  // extent not computed for create response
-        Some(request.crs),  // storage_crs from request
+        request.crs,  // storage_crs from request
         true,  // include all links for consistency
     );
 
@@ -316,12 +314,15 @@ pub async fn patch_collection(
 
     let base_url = &config.base_url;
 
+    // Fetch storage_crs from database
+    let storage_crs = service.get_storage_crs(&collection).await?.unwrap_or(4326);
+
     // Build response using the common helper to ensure consistency
     let response = build_collection_response(
         &collection,
         base_url,
         None,  // extent not computed for patch response
-        None,  // storage_crs not computed for patch response
+        storage_crs,
         true,  // include all links for consistency
     );
 
@@ -391,12 +392,15 @@ pub async fn update_collection(
 
     let base_url = &config.base_url;
 
+    // Fetch storage_crs from database
+    let storage_crs = service.get_storage_crs(&collection).await?.unwrap_or(4326);
+
     // Build response using the common helper to ensure consistency
     let response = build_collection_response(
         &collection,
         base_url,
         None,  // extent not computed for put response
-        None,  // storage_crs not computed for put response
+        storage_crs,
         true,  // include all links for consistency
     );
 

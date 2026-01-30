@@ -5,7 +5,7 @@ use crate::api::collections::schemas::CollectionSchema;
 use crate::api::collections::sharing::{PermissionLevel, ShareEntry};
 use crate::api::common::{Bbox, Extent, SpatialExtent, TemporalExtent};
 use crate::auth::{is_valid_role_name, quote_ident, RoleManager};
-use crate::db::{Collection, Database};
+use crate::db::{Collection, CollectionWithCrs, Database};
 use crate::error::{AppError, AppResult};
 
 pub struct CollectionService {
@@ -22,12 +22,20 @@ impl CollectionService {
         username: &str,
         limit: u32,
         offset: u32,
-    ) -> AppResult<Vec<Collection>> {
-        // List collections accessible to this user
+    ) -> AppResult<Vec<CollectionWithCrs>> {
+        // List collections accessible to this user with storage CRS included
         // This includes owned collections and shared collections
-        let collections: Vec<Collection> = sqlx::query_as(
+        let collections: Vec<CollectionWithCrs> = sqlx::query_as(
             r#"
-            SELECT c.*
+            SELECT c.*,
+                COALESCE(
+                    (SELECT srid FROM geometry_columns 
+                     WHERE f_table_schema = c.schema_name 
+                     AND f_table_name = c.table_name 
+                     AND f_geometry_column = 'geometry'
+                     LIMIT 1),
+                    4326
+                ) as storage_crs
             FROM spatialvault.collections c
             WHERE c.owner = $1
                OR EXISTS (
@@ -51,9 +59,21 @@ impl CollectionService {
         &self,
         username: &str,
         collection_id: &str,
-    ) -> AppResult<Option<Collection>> {
-        let collection: Option<Collection> = sqlx::query_as(
-            "SELECT * FROM spatialvault.collections WHERE canonical_name = $1",
+    ) -> AppResult<Option<CollectionWithCrs>> {
+        let collection: Option<CollectionWithCrs> = sqlx::query_as(
+            r#"
+            SELECT c.*,
+                COALESCE(
+                    (SELECT srid FROM geometry_columns 
+                     WHERE f_table_schema = c.schema_name 
+                     AND f_table_name = c.table_name 
+                     AND f_geometry_column = 'geometry'
+                     LIMIT 1),
+                    4326
+                ) as storage_crs
+            FROM spatialvault.collections c
+            WHERE canonical_name = $1
+            "#,
         )
         .bind(collection_id)
         .fetch_optional(self.db.pool())
@@ -493,27 +513,6 @@ impl CollectionService {
             .await?;
 
         Ok(result.map(|(srid,)| srid))
-    }
-
-    /// Batch fetch extent and storage_crs for multiple collections efficiently
-    /// Returns a tuple of (extent, storage_crs) for each collection
-    pub async fn get_collection_metadata_batch(
-        &self,
-        collections: &[Collection],
-    ) -> AppResult<Vec<(Option<Extent>, Option<i32>)>> {
-        let mut results = Vec::with_capacity(collections.len());
-        
-        for collection in collections {
-            // Fetch extent and storage_crs in parallel for each collection
-            let extent_future = self.compute_extent(collection);
-            let storage_crs_future = self.get_storage_crs(collection);
-            
-            let (extent, storage_crs) = tokio::join!(extent_future, storage_crs_future);
-            
-            results.push((extent?, storage_crs?));
-        }
-        
-        Ok(results)
     }
 
     pub async fn get_collection_schema(
