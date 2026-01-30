@@ -21,7 +21,7 @@ use crate::api::common::{media_type, rel, Link, SpatialExtent};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::{AppError, AppResult};
-use crate::services::CoverageService;
+use crate::services::{CollectionService, CoverageService};
 
 /// Coverage description (OGC API Coverages)
 #[derive(Debug, Serialize, JsonSchema)]
@@ -113,10 +113,22 @@ pub struct CoveragePath {
 pub async fn get_coverage(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<CoverageService>>,
+    State((service, collection_service)): State<(Arc<CoverageService>, Arc<CollectionService>)>,
     path: CoveragePath,
-) -> AppResult<Json<CoverageDescription>> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
+    // Check for alias redirect (only if no active collection with this exact name exists)
+    if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/coverage", config.base_url, new_name)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
+    }
+
     let collection = service
         .get_collection(&user.username, &collection_id)
         .await?
@@ -164,7 +176,7 @@ pub async fn get_coverage(
         ],
     };
 
-    Ok(Json(coverage))
+    Ok(Json(coverage).into_response())
 }
 
 fn get_coverage_docs(op: TransformOperation) -> TransformOperation {
@@ -188,16 +200,29 @@ pub struct CoverageDomainsetPath {
 
 /// Get domain set
 pub async fn get_domainset(
+    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<CoverageService>>,
+    State((service, collection_service)): State<(Arc<CoverageService>, Arc<CollectionService>)>,
     path: CoverageDomainsetPath,
-) -> AppResult<Json<DomainSet>> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
+    // Check for alias redirect (only if no active collection with this exact name exists)
+    if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/coverage/domainset", config.base_url, new_name)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
+    }
+
     let domain = service
         .get_domainset(&user.username, &collection_id)
         .await?;
 
-    Ok(Json(domain))
+    Ok(Json(domain).into_response())
 }
 
 fn get_domainset_docs(op: TransformOperation) -> TransformOperation {
@@ -219,16 +244,29 @@ pub struct CoverageRangetypePath {
 
 /// Get range type
 pub async fn get_rangetype(
+    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<CoverageService>>,
+    State((service, collection_service)): State<(Arc<CoverageService>, Arc<CollectionService>)>,
     path: CoverageRangetypePath,
-) -> AppResult<Json<RangeType>> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
+    // Check for alias redirect (only if no active collection with this exact name exists)
+    if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/coverage/rangetype", config.base_url, new_name)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
+    }
+
     let rangetype = service
         .get_rangetype(&user.username, &collection_id)
         .await?;
 
-    Ok(Json(rangetype))
+    Ok(Json(rangetype).into_response())
 }
 
 fn get_rangetype_docs(op: TransformOperation) -> TransformOperation {
@@ -273,7 +311,7 @@ fn get_coverage_data_docs(op: TransformOperation) -> TransformOperation {
         })
 }
 
-pub fn routes(service: Arc<CoverageService>) -> ApiRouter {
+pub fn routes(service: Arc<CoverageService>, collection_service: Arc<CollectionService>) -> ApiRouter {
     ApiRouter::new()
         .api_route(
             "/collections/{collection_id}/coverage",
@@ -287,5 +325,5 @@ pub fn routes(service: Arc<CoverageService>) -> ApiRouter {
             "/collections/{collection_id}/coverage/rangetype",
             get_with(get_rangetype, get_rangetype_docs),
         )
-        .with_state(service)
+        .with_state((service, collection_service))
 }

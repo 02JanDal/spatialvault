@@ -5,7 +5,7 @@ use crate::api::collections::schemas::CollectionSchema;
 use crate::api::collections::sharing::{PermissionLevel, ShareEntry};
 use crate::api::common::{Bbox, Extent, SpatialExtent, TemporalExtent};
 use crate::auth::{is_valid_role_name, quote_ident, RoleManager};
-use crate::db::{Collection, Database};
+use crate::db::{Collection, CollectionWithCrs, Database};
 use crate::error::{AppError, AppResult};
 
 pub struct CollectionService {
@@ -22,12 +22,20 @@ impl CollectionService {
         username: &str,
         limit: u32,
         offset: u32,
-    ) -> AppResult<Vec<Collection>> {
-        // List collections accessible to this user
+    ) -> AppResult<Vec<CollectionWithCrs>> {
+        // List collections accessible to this user with storage CRS included
         // This includes owned collections and shared collections
-        let collections: Vec<Collection> = sqlx::query_as(
+        let collections: Vec<CollectionWithCrs> = sqlx::query_as(
             r#"
-            SELECT c.*
+            SELECT c.*,
+                COALESCE(
+                    (SELECT srid FROM geometry_columns 
+                     WHERE f_table_schema = c.schema_name 
+                     AND f_table_name = c.table_name 
+                     AND f_geometry_column = 'geometry'
+                     LIMIT 1),
+                    4326
+                ) as storage_crs
             FROM spatialvault.collections c
             WHERE c.owner = $1
                OR EXISTS (
@@ -51,9 +59,21 @@ impl CollectionService {
         &self,
         username: &str,
         collection_id: &str,
-    ) -> AppResult<Option<Collection>> {
-        let collection: Option<Collection> = sqlx::query_as(
-            "SELECT * FROM spatialvault.collections WHERE canonical_name = $1",
+    ) -> AppResult<Option<CollectionWithCrs>> {
+        let collection: Option<CollectionWithCrs> = sqlx::query_as(
+            r#"
+            SELECT c.*,
+                COALESCE(
+                    (SELECT srid FROM geometry_columns 
+                     WHERE f_table_schema = c.schema_name 
+                     AND f_table_name = c.table_name 
+                     AND f_geometry_column = 'geometry'
+                     LIMIT 1),
+                    4326
+                ) as storage_crs
+            FROM spatialvault.collections c
+            WHERE canonical_name = $1
+            "#,
         )
         .bind(collection_id)
         .fetch_optional(self.db.pool())
@@ -71,6 +91,24 @@ impl CollectionService {
         .await?;
 
         Ok(alias.map(|(new_name,)| new_name))
+    }
+
+    /// Check if collection_id is an alias that should redirect.
+    /// Returns Some(new_name) if:
+    /// 1. There is NO currently active collection with the exact name
+    /// 2. AND there is an alias mapping from this name to another name
+    /// Otherwise returns None.
+    pub async fn check_alias_redirect(&self, collection_id: &str) -> AppResult<Option<String>> {
+        // First check if there's an active collection with this exact name
+        let active_collection = self.get_collection("", collection_id).await?;
+        
+        if active_collection.is_some() {
+            // There is an active collection with this name, no redirect
+            return Ok(None);
+        }
+        
+        // No active collection, check for alias
+        self.get_alias(collection_id).await
     }
 
     pub async fn create_collection(

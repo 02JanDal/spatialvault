@@ -18,6 +18,42 @@ pub struct Collection {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
+/// Collection with storage CRS included (used when fetching with metadata)
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CollectionWithCrs {
+    pub id: Uuid,
+    pub canonical_name: String,
+    pub owner: String,
+    pub schema_name: String,
+    pub table_name: String,
+    pub collection_type: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub version: i64,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub storage_crs: i32,
+}
+
+impl CollectionWithCrs {
+    pub fn as_collection(&self) -> Collection {
+        Collection {
+            id: self.id,
+            canonical_name: self.canonical_name.clone(),
+            owner: self.owner.clone(),
+            schema_name: self.schema_name.clone(),
+            table_name: self.table_name.clone(),
+            collection_type: self.collection_type.clone(),
+            title: self.title.clone(),
+            description: self.description.clone(),
+            version: self.version,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CollectionType {
     Vector,
