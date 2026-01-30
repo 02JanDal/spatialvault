@@ -7,7 +7,8 @@ use aide::{
 };
 use axum::{
     extract::{Extension, State},
-    http::StatusCode,
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use schemars::JsonSchema;
@@ -15,7 +16,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::auth::AuthenticatedUser;
-use crate::error::AppResult;
+use crate::config::Config;
+use crate::error::{AppError, AppResult};
 use crate::services::CollectionService;
 
 /// Share permission level
@@ -78,17 +80,30 @@ pub struct CollectionSharingPath {
 }
 
 pub async fn list_shares(
+    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionSharingPath,
-) -> AppResult<Json<SharesResponse>> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
+    // Check for alias redirect (only if no active collection with this exact name exists)
+    if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/sharing", config.base_url, new_name)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
+    }
+
     let shares = service.list_shares(&user.username, &collection_id).await?;
 
     Ok(Json(SharesResponse {
         collection_id,
         shares,
-    }))
+    }).into_response())
 }
 
 fn list_shares_docs(op: TransformOperation) -> TransformOperation {
@@ -101,12 +116,25 @@ fn list_shares_docs(op: TransformOperation) -> TransformOperation {
 }
 
 pub async fn add_share(
+    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionSharingPath,
     Json(request): Json<AddShareRequest>,
-) -> AppResult<StatusCode> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
+    // Check for alias redirect (only if no active collection with this exact name exists)
+    if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/sharing", config.base_url, new_name)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
+    }
+
     service
         .add_share(
             &user.username,
@@ -117,7 +145,7 @@ pub async fn add_share(
         )
         .await?;
 
-    Ok(StatusCode::CREATED)
+    Ok(StatusCode::CREATED.into_response())
 }
 
 fn add_share_docs(op: TransformOperation) -> TransformOperation {
@@ -140,17 +168,30 @@ pub struct SharePrincipalPath {
 }
 
 pub async fn remove_share(
+    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: SharePrincipalPath,
-) -> AppResult<StatusCode> {
+) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
+    // Check for alias redirect (only if no active collection with this exact name exists)
+    if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::LOCATION,
+            format!("{}/collections/{}/sharing/{}", config.base_url, new_name, path.principal)
+                .parse()
+                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+        );
+        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
+    }
+
     let principal = path.principal;
     service
         .remove_share(&user.username, &collection_id, &principal)
         .await?;
 
-    Ok(StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 fn remove_share_docs(op: TransformOperation) -> TransformOperation {

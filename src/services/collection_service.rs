@@ -73,6 +73,24 @@ impl CollectionService {
         Ok(alias.map(|(new_name,)| new_name))
     }
 
+    /// Check if collection_id is an alias that should redirect.
+    /// Returns Some(new_name) if:
+    /// 1. There is NO currently active collection with the exact name
+    /// 2. AND there is an alias mapping from this name to another name
+    /// Otherwise returns None.
+    pub async fn check_alias_redirect(&self, collection_id: &str) -> AppResult<Option<String>> {
+        // First check if there's an active collection with this exact name
+        let active_collection = self.get_collection("", collection_id).await?;
+        
+        if active_collection.is_some() {
+            // There is an active collection with this name, no redirect
+            return Ok(None);
+        }
+        
+        // No active collection, check for alias
+        self.get_alias(collection_id).await
+    }
+
     pub async fn create_collection(
         &self,
         username: &str,
