@@ -4,6 +4,17 @@
 
 SpatialVault is a geospatial data management API server built with Rust. It provides OGC-compliant APIs for managing geospatial features, coverages, tiles, and STAC collections with PostgreSQL/PostGIS storage and S3 object storage integration.
 
+### Architecture Clarifications
+
+- **OGC API Processes** manages async jobs (file conversion, processing tasks, etc.)
+- **OGC API Coverages** is for raster data only (stored in S3 as COG files)
+- **Point clouds** are served via STAC/3D GeoVolumes (stored in S3 as COPC files)
+- **CRS** is derived from PostGIS geometry column type (not stored separately)
+- **Computed metadata** (bbox, temporal extent) are not stored in the collections table
+- **Collections** can be owned by users OR groups
+- **Vector data** is stored in user-specific PostgreSQL schemas
+- **Raster/point cloud files** are stored in S3-compatible object storage
+
 ## Tech Stack
 
 - **Language**: Rust 1.93+ (edition 2024)
@@ -76,6 +87,9 @@ cargo run -- --worker
 - Use prepared statements and parameterized queries
 - Handle NULL values explicitly
 - Use PostGIS functions for geospatial operations
+- Vector data is stored in user-specific PostgreSQL schemas
+- CRS is derived from PostGIS geometry column type (e.g., `geometry(Point, 4326)`)
+- Computed metadata (bbox, temporal extent) should be calculated at runtime, not stored in collections table
 
 ### API Design
 
@@ -84,6 +98,11 @@ cargo run -- --worker
 - Implement proper pagination for list endpoints
 - Return appropriate HTTP status codes
 - Use typed routing with `axum-extra`
+- **OGC API Features**: Vector data from PostGIS
+- **OGC API Tiles**: Both vector (MVT from PostGIS) and raster tiles
+- **OGC API Coverages**: Raster data from S3 (COG files)
+- **OGC API Processes**: Async job management (conversions, processing)
+- **STAC API**: Metadata for raster and point cloud items (COPC files)
 
 ### Testing
 
@@ -98,16 +117,29 @@ cargo run -- --worker
 ```
 src/
 ├── api/           - API endpoints and handlers
-├── auth/          - Authentication and authorization
+│   ├── collections/  - OGC API Collections
+│   ├── features/     - OGC API Features (vector data)
+│   ├── tiles/        - OGC API Tiles (vector & raster)
+│   ├── coverages/    - OGC API Coverages (raster data)
+│   ├── processes/    - OGC API Processes (async jobs)
+│   └── stac/         - STAC API (raster & point cloud metadata)
+├── auth/          - OAuth2/OIDC authentication and authorization
 ├── config.rs      - Configuration management
 ├── db/            - Database layer and queries
+│   ├── PostgreSQL/PostGIS for vector data (user schemas)
+│   └── Metadata tables for collections, items, jobs
 ├── error.rs       - Error types
 ├── lib.rs         - Library entry point
-├── main.rs        - Application entry point
+├── main.rs        - Application entry point (Axum server)
 ├── openapi.rs     - OpenAPI documentation setup
-├── processing/    - Background job processing
+├── processing/    - Background job processing (worker mode)
 ├── services/      - Business logic layer
-└── storage/       - Object storage integration
+│   ├── Features, Tiles, Coverages services
+│   ├── STAC service
+│   └── Jobs/Processes service
+└── storage/       - S3 object storage integration
+    ├── COG raster files
+    └── COPC point cloud files
 tests/
 ├── common/        - Test utilities
 ├── integration/   - Integration tests
@@ -177,7 +209,14 @@ migrations/        - Database migrations
 ## Additional Notes
 
 - The project supports both server and worker modes (background job processing)
+  - Server mode: Runs the Axum HTTP server with all API endpoints
+  - Worker mode: Runs background job processor for OGC API Processes tasks
 - GDAL support is optional via the `gdal-support` feature flag
 - The API supports multiple OGC standards: Features, Tiles, Coverages, Processes, STAC
 - Authentication is handled via OIDC with JWT validation
 - All geospatial data uses WGS84 (EPSG:4326) or Web Mercator (EPSG:3857) coordinate systems
+- Collections can be owned by individual users or groups
+- File formats:
+  - Raster data: Cloud-Optimized GeoTIFF (COG) in S3
+  - Point clouds: Cloud-Optimized Point Cloud (COPC) in S3
+  - Vector data: PostGIS geometry types in user schemas
