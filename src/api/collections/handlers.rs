@@ -28,10 +28,9 @@ use crate::services::CollectionService;
 /// This ensures consistent structure between list and get endpoints
 /// by using the same link building logic.
 /// 
-/// Both endpoints now include all links (self, items, parent, schema, type-specific)
-/// as per OGC API Features specification for consistency.
-/// Both extent and storage_crs are computed from the database for all endpoints
-/// to ensure complete and accurate collection metadata.
+/// The link structure differs between list and detail views:
+/// - List: self, items, tiles/coverage (type-specific)
+/// - Detail: self, items, parent, tiles/coverage, schema
 fn build_collection_response(
     collection: &Collection,
     base_url: &str,
@@ -49,34 +48,33 @@ fn build_collection_response(
             .with_type(media_type::GEOJSON),
     ];
     
-    // Add extended links for complete collection metadata
-    // Both list and detail endpoints now include these for consistency
+    // Add type-specific links (always included for both list and detail)
+    match collection.collection_type.as_str() {
+        "vector" => {
+            links.push(
+                Link::new(format!("{}/collections/{}/tiles", base_url, id), "tiles")
+                    .with_type(media_type::JSON),
+            );
+        }
+        "raster" => {
+            links.push(
+                Link::new(
+                    format!("{}/collections/{}/coverage", base_url, id),
+                    "coverage",
+                )
+                .with_type(media_type::JSON),
+            );
+        }
+        _ => {}
+    }
+    
+    // Add extended links for detail view (parent and schema)
     if include_extended_links {
         // Parent link back to collections list
         links.push(
             Link::new(format!("{}/collections", base_url), rel::PARENT)
                 .with_type(media_type::JSON),
         );
-        
-        // Add type-specific links
-        match collection.collection_type.as_str() {
-            "vector" => {
-                links.push(
-                    Link::new(format!("{}/collections/{}/tiles", base_url, id), "tiles")
-                        .with_type(media_type::JSON),
-                );
-            }
-            "raster" => {
-                links.push(
-                    Link::new(
-                        format!("{}/collections/{}/coverage", base_url, id),
-                        "coverage",
-                    )
-                    .with_type(media_type::JSON),
-                );
-            }
-            _ => {}
-        }
         
         // Add schema link
         links.push(
@@ -122,7 +120,7 @@ pub async fn list_collections(
             base_url,
             extent,
             c.storage_crs,
-            true,
+            false,  // List view: don't include parent and schema links
         ));
     }
 
@@ -316,12 +314,15 @@ pub async fn patch_collection(
 
     // Fetch storage_crs from database
     let storage_crs = service.get_storage_crs(&collection).await?.unwrap_or(4326);
+    
+    // Compute extent
+    let extent = service.compute_extent(&collection).await?;
 
     // Build response using the common helper to ensure consistency
     let response = build_collection_response(
         &collection,
         base_url,
-        None,  // extent not computed for patch response
+        extent,
         storage_crs,
         true,  // include all links for consistency
     );
@@ -394,12 +395,15 @@ pub async fn update_collection(
 
     // Fetch storage_crs from database
     let storage_crs = service.get_storage_crs(&collection).await?.unwrap_or(4326);
+    
+    // Compute extent
+    let extent = service.compute_extent(&collection).await?;
 
     // Build response using the common helper to ensure consistency
     let response = build_collection_response(
         &collection,
         base_url,
-        None,  // extent not computed for put response
+        extent,
         storage_crs,
         true,  // include all links for consistency
     );

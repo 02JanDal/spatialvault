@@ -241,20 +241,20 @@ async fn test_collection_response_synchronization() {
         "Detail collection should have items link"
     );
 
-    // Both should have parent link
+    // Only detail should have parent link
     assert!(
-        list_links.iter().any(|l| l["rel"].as_str() == Some("parent")),
-        "List collection should have parent link"
+        !list_links.iter().any(|l| l["rel"].as_str() == Some("parent")),
+        "List collection should NOT have parent link"
     );
     assert!(
         detail_links.iter().any(|l| l["rel"].as_str() == Some("parent")),
         "Detail collection should have parent link"
     );
 
-    // Both should have schema link (describedby)
+    // Only detail should have schema link (describedby)
     assert!(
-        list_links.iter().any(|l| l["rel"].as_str() == Some("describedby")),
-        "List collection should have describedby link"
+        !list_links.iter().any(|l| l["rel"].as_str() == Some("describedby")),
+        "List collection should NOT have describedby link"
     );
     assert!(
         detail_links.iter().any(|l| l["rel"].as_str() == Some("describedby")),
