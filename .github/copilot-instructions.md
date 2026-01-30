@@ -209,7 +209,3 @@ migrations/        - Database migrations
 - Authentication is handled via OIDC with JWT validation
 - All geospatial data uses WGS84 (EPSG:4326) or Web Mercator (EPSG:3857) coordinate systems
 - Collections can be owned by individual users or groups
-- File formats:
-  - Raster data: Cloud-Optimized GeoTIFF (COG) in S3
-  - Point clouds: Cloud-Optimized Point Cloud (COPC) in S3
-  - Vector data: PostGIS geometry types in user schemas
