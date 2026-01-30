@@ -1,23 +1,20 @@
 use aide::{
-    axum::{
-        routing::get_with,
-        ApiRouter,
-    },
+    axum::{ApiRouter, routing::get_with},
     transform::TransformOperation,
 };
 use axum::{
+    Json,
     body::Body,
     extract::{Extension, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    Json,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::sync::Arc;
 
 use super::range_subset::CoverageSubsetParams;
-use crate::api::common::{media_type, rel, Link, SpatialExtent};
+use crate::api::common::{Link, SpatialExtent, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::{AppError, AppResult};
@@ -118,7 +115,10 @@ pub async fn get_coverage(
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
+    if let Some(new_name) = collection_service
+        .check_alias_redirect(&collection_id)
+        .await?
+    {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::LOCATION,
@@ -159,12 +159,18 @@ pub async fn get_coverage(
             )
             .with_type(media_type::JSON),
             Link::new(
-                format!("{}/collections/{}/coverage/domainset", base_url, collection_id),
+                format!(
+                    "{}/collections/{}/coverage/domainset",
+                    base_url, collection_id
+                ),
                 "domainset",
             )
             .with_type(media_type::JSON),
             Link::new(
-                format!("{}/collections/{}/coverage/rangetype", base_url, collection_id),
+                format!(
+                    "{}/collections/{}/coverage/rangetype",
+                    base_url, collection_id
+                ),
                 "rangetype",
             )
             .with_type(media_type::JSON),
@@ -207,13 +213,19 @@ pub async fn get_domainset(
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
+    if let Some(new_name) = collection_service
+        .check_alias_redirect(&collection_id)
+        .await?
+    {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::LOCATION,
-            format!("{}/collections/{}/coverage/domainset", config.base_url, new_name)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+            format!(
+                "{}/collections/{}/coverage/domainset",
+                config.base_url, new_name
+            )
+            .parse()
+            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
         );
         return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
     }
@@ -229,9 +241,7 @@ fn get_domainset_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get domain set")
         .description("Returns the spatial/temporal extent and resolution of a coverage")
         .tag("Coverages")
-        .response_with::<200, Json<DomainSet>, _>(|res| {
-            res.description("Domain set description")
-        })
+        .response_with::<200, Json<DomainSet>, _>(|res| res.description("Domain set description"))
 }
 
 /// Path parameters for coverage rangetype endpoint
@@ -251,13 +261,19 @@ pub async fn get_rangetype(
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
+    if let Some(new_name) = collection_service
+        .check_alias_redirect(&collection_id)
+        .await?
+    {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::LOCATION,
-            format!("{}/collections/{}/coverage/rangetype", config.base_url, new_name)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+            format!(
+                "{}/collections/{}/coverage/rangetype",
+                config.base_url, new_name
+            )
+            .parse()
+            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
         );
         return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
     }
@@ -273,9 +289,7 @@ fn get_rangetype_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get range type")
         .description("Returns the band/channel descriptions of a coverage")
         .tag("Coverages")
-        .response_with::<200, Json<RangeType>, _>(|res| {
-            res.description("Range type description")
-        })
+        .response_with::<200, Json<RangeType>, _>(|res| res.description("Range type description"))
 }
 
 /// Get coverage data with optional subsetting
@@ -311,7 +325,10 @@ fn get_coverage_data_docs(op: TransformOperation) -> TransformOperation {
         })
 }
 
-pub fn routes(service: Arc<CoverageService>, collection_service: Arc<CollectionService>) -> ApiRouter {
+pub fn routes(
+    service: Arc<CoverageService>,
+    collection_service: Arc<CollectionService>,
+) -> ApiRouter {
     ApiRouter::new()
         .api_route(
             "/collections/{collection_id}/coverage",

@@ -1,6 +1,6 @@
 use sqlx::{
-    postgres::{PgPool, PgPoolOptions},
     Executor,
+    postgres::{PgPool, PgPoolOptions},
 };
 use std::sync::Arc;
 
@@ -105,7 +105,10 @@ fn is_valid_role_name(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        && name.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+        && name
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
 }
 
 /// Quote an identifier for safe use in SQL

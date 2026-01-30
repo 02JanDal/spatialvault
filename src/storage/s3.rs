@@ -1,9 +1,5 @@
 use bytes::Bytes;
-use object_store::{
-    aws::AmazonS3Builder,
-    path::Path,
-    ObjectStore,
-};
+use object_store::{ObjectStore, aws::AmazonS3Builder, path::Path};
 use std::sync::Arc;
 
 use crate::config::S3Config;
@@ -118,8 +114,8 @@ impl S3Storage {
         let mut keys = Vec::new();
 
         while let Some(result) = stream.next().await {
-            let meta = result
-                .map_err(|e| AppError::Storage(format!("Failed to list objects: {}", e)))?;
+            let meta =
+                result.map_err(|e| AppError::Storage(format!("Failed to list objects: {}", e)))?;
             keys.push(meta.location.to_string());
         }
 

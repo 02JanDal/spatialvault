@@ -3,8 +3,8 @@
 //! Implements abstract test requirements from:
 //! http://www.opengis.net/spec/ogcapi-tiles-1/1.0/conf/core
 
+use crate::common::{TestApp, test_collection_request, test_feature_request};
 use axum::http::StatusCode;
-use crate::common::{test_collection_request, test_feature_request, TestApp};
 
 /// Test TileMatrixSets endpoint
 #[tokio::test]
@@ -47,7 +47,9 @@ async fn test_collection_tileset_metadata() {
     let collection_id = created["id"].as_str().expect("Collection must have id");
 
     // Get tileset metadata
-    let response = app.get(&format!("/collections/{}/tiles", collection_id)).await;
+    let response = app
+        .get(&format!("/collections/{}/tiles", collection_id))
+        .await;
     response.assert_success();
     response.assert_content_type("application/json");
 

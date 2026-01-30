@@ -1,7 +1,7 @@
 //! Collection rename/redirect integration tests
 
+use crate::common::{TestApp, test_collection_request};
 use axum::http::StatusCode;
-use crate::common::{test_collection_request, TestApp};
 
 /// Test that renamed collections can be accessed by new name
 #[tokio::test]
@@ -95,7 +95,11 @@ async fn test_active_collection_takes_priority_over_alias() {
         "id": "alias-test-renamed",
     });
     let rename_response = app
-        .patch_json(&format!("/collections/{}", collection_id_1), &rename, &etag1)
+        .patch_json(
+            &format!("/collections/{}", collection_id_1),
+            &rename,
+            &etag1,
+        )
         .await;
 
     // If rename is supported, an alias is created
@@ -111,7 +115,12 @@ async fn test_active_collection_takes_priority_over_alias() {
         let collection_id_2 = created2["id"].as_str().expect("Collection must have id");
 
         // When accessing the old name, we should get the NEW collection (not redirected)
-        let get_response = app.get(&format!("/collections/{}", collection_id_1.split(':').last().unwrap())).await;
+        let get_response = app
+            .get(&format!(
+                "/collections/{}",
+                collection_id_1.split(':').last().unwrap()
+            ))
+            .await;
         get_response.assert_success();
         let body: serde_json::Value = get_response.json();
         // This should be the new collection, not a redirect
@@ -144,14 +153,24 @@ async fn test_alias_redirect_on_items_endpoint() {
     if rename_response.status == StatusCode::OK {
         let renamed: serde_json::Value = rename_response.json();
         let new_id = renamed["id"].as_str().expect("Should have new id");
-        
+
         // Try to access items with the old name - should get a 307 redirect
-        let items_response = app.get(&format!("/collections/{}/items", collection_id.split(':').last().unwrap())).await;
+        let items_response = app
+            .get(&format!(
+                "/collections/{}/items",
+                collection_id.split(':').last().unwrap()
+            ))
+            .await;
         assert_eq!(items_response.status, StatusCode::TEMPORARY_REDIRECT);
-        
+
         // Verify Location header points to the new collection
-        let location = items_response.location().expect("Should have Location header");
-        assert!(location.contains(&new_id), "Location header should point to new collection");
+        let location = items_response
+            .location()
+            .expect("Should have Location header");
+        assert!(
+            location.contains(&new_id),
+            "Location header should point to new collection"
+        );
     }
 }
 
@@ -180,14 +199,24 @@ async fn test_alias_redirect_on_schema_endpoint() {
     if rename_response.status == StatusCode::OK {
         let renamed: serde_json::Value = rename_response.json();
         let new_id = renamed["id"].as_str().expect("Should have new id");
-        
+
         // Try to access schema with the old name - should get a 307 redirect
-        let schema_response = app.get(&format!("/collections/{}/schema", collection_id.split(':').last().unwrap())).await;
+        let schema_response = app
+            .get(&format!(
+                "/collections/{}/schema",
+                collection_id.split(':').last().unwrap()
+            ))
+            .await;
         assert_eq!(schema_response.status, StatusCode::TEMPORARY_REDIRECT);
-        
+
         // Verify Location header points to the new collection
-        let location = schema_response.location().expect("Should have Location header");
-        assert!(location.contains(&new_id), "Location header should point to new collection");
+        let location = schema_response
+            .location()
+            .expect("Should have Location header");
+        assert!(
+            location.contains(&new_id),
+            "Location header should point to new collection"
+        );
     }
 }
 
@@ -216,14 +245,24 @@ async fn test_alias_redirect_on_tiles_endpoint() {
     if rename_response.status == StatusCode::OK {
         let renamed: serde_json::Value = rename_response.json();
         let new_id = renamed["id"].as_str().expect("Should have new id");
-        
+
         // Try to access tiles with the old name - should get a 307 redirect
-        let tiles_response = app.get(&format!("/collections/{}/tiles", collection_id.split(':').last().unwrap())).await;
+        let tiles_response = app
+            .get(&format!(
+                "/collections/{}/tiles",
+                collection_id.split(':').last().unwrap()
+            ))
+            .await;
         assert_eq!(tiles_response.status, StatusCode::TEMPORARY_REDIRECT);
-        
+
         // Verify Location header points to the new collection
-        let location = tiles_response.location().expect("Should have Location header");
-        assert!(location.contains(&new_id), "Location header should point to new collection");
+        let location = tiles_response
+            .location()
+            .expect("Should have Location header");
+        assert!(
+            location.contains(&new_id),
+            "Location header should point to new collection"
+        );
     }
 }
 
@@ -252,13 +291,23 @@ async fn test_alias_redirect_on_sharing_endpoint() {
     if rename_response.status == StatusCode::OK {
         let renamed: serde_json::Value = rename_response.json();
         let new_id = renamed["id"].as_str().expect("Should have new id");
-        
+
         // Try to access sharing with the old name - should get a 307 redirect
-        let sharing_response = app.get(&format!("/collections/{}/sharing", collection_id.split(':').last().unwrap())).await;
+        let sharing_response = app
+            .get(&format!(
+                "/collections/{}/sharing",
+                collection_id.split(':').last().unwrap()
+            ))
+            .await;
         assert_eq!(sharing_response.status, StatusCode::TEMPORARY_REDIRECT);
-        
+
         // Verify Location header points to the new collection
-        let location = sharing_response.location().expect("Should have Location header");
-        assert!(location.contains(&new_id), "Location header should point to new collection");
+        let location = sharing_response
+            .location()
+            .expect("Should have Location header");
+        assert!(
+            location.contains(&new_id),
+            "Location header should point to new collection"
+        );
     }
 }

@@ -1,7 +1,7 @@
 //! Collection CRUD integration tests
 
+use crate::common::{TestApp, test_collection_request};
 use axum::http::StatusCode;
-use crate::common::{test_collection_request, TestApp};
 
 /// Test creating a collection
 #[tokio::test]
@@ -22,7 +22,12 @@ async fn test_create_collection() {
     assert!(etag.is_some(), "Should have ETag header");
 
     let body: serde_json::Value = response.json();
-    assert!(body["id"].as_str().unwrap().contains("integration-create-test"));
+    assert!(
+        body["id"]
+            .as_str()
+            .unwrap()
+            .contains("integration-create-test")
+    );
 }
 
 /// Test getting a collection
@@ -48,7 +53,12 @@ async fn test_get_collection() {
 
     let body: serde_json::Value = response.json();
     assert_eq!(body["id"].as_str(), Some(collection_id));
-    assert!(body["title"].as_str().unwrap().contains("integration-get-test"));
+    assert!(
+        body["title"]
+            .as_str()
+            .unwrap()
+            .contains("integration-get-test")
+    );
 }
 
 /// Test updating a collection with ETag
@@ -129,7 +139,11 @@ async fn test_update_collection_wrong_etag() {
     });
 
     let response = app
-        .patch_json(&format!("/collections/{}", collection_id), &update, "\"999\"")
+        .patch_json(
+            &format!("/collections/{}", collection_id),
+            &update,
+            "\"999\"",
+        )
         .await;
 
     // Should return 412 Precondition Failed

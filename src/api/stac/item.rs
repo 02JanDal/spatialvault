@@ -1,19 +1,19 @@
 use aide::{
     axum::{
-        routing::{get_with, post_with},
         ApiRouter,
+        routing::{get_with, post_with},
     },
     transform::TransformOperation,
 };
 use axum::{
-    extract::{Extension, Query, State},
     Json,
+    extract::{Extension, Query, State},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::api::common::{media_type, rel, Link};
+use crate::api::common::{Link, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::AppResult;
@@ -119,8 +119,7 @@ pub async fn search_get(
         links: vec![
             Link::new(format!("{}/stac/search", base_url), rel::SELF)
                 .with_type(media_type::GEOJSON),
-            Link::new(format!("{}/stac", base_url), rel::ROOT)
-                .with_type(media_type::JSON),
+            Link::new(format!("{}/stac", base_url), rel::ROOT).with_type(media_type::JSON),
         ],
         context: Some(StacContext {
             returned: results.returned,
@@ -158,8 +157,7 @@ pub async fn search_post(
         links: vec![
             Link::new(format!("{}/stac/search", base_url), rel::SELF)
                 .with_type(media_type::GEOJSON),
-            Link::new(format!("{}/stac", base_url), rel::ROOT)
-                .with_type(media_type::JSON),
+            Link::new(format!("{}/stac", base_url), rel::ROOT).with_type(media_type::JSON),
         ],
         context: Some(StacContext {
             returned: results.returned,
@@ -173,7 +171,9 @@ pub async fn search_post(
 
 fn search_post_docs(op: TransformOperation) -> TransformOperation {
     op.summary("STAC search (POST)")
-        .description("Search for STAC items using a JSON request body with spatial/temporal filters")
+        .description(
+            "Search for STAC items using a JSON request body with spatial/temporal filters",
+        )
         .tag("STAC")
         .response_with::<200, Json<StacItemCollection>, _>(|res| {
             res.description("STAC item search results")
@@ -184,8 +184,7 @@ pub fn routes(service: Arc<StacService>) -> ApiRouter {
     ApiRouter::new()
         .api_route(
             "/stac/search",
-            get_with(search_get, search_get_docs)
-                .post_with(search_post, search_post_docs),
+            get_with(search_get, search_get_docs).post_with(search_post, search_post_docs),
         )
         .with_state(service)
 }

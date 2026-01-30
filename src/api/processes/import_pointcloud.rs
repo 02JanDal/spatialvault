@@ -45,9 +45,7 @@ impl ImportPointCloudInputs {
     pub fn validate(&self) -> AppResult<()> {
         // Validate collection name
         if self.collection.is_empty() {
-            return Err(AppError::BadRequest(
-                "collection is required".to_string(),
-            ));
+            return Err(AppError::BadRequest("collection is required".to_string()));
         }
 
         // Validate data input
@@ -59,11 +57,8 @@ impl ImportPointCloudInputs {
                     ));
                 }
                 // Validate base64
-                if base64::Engine::decode(
-                    &base64::engine::general_purpose::STANDARD,
-                    &inline.value,
-                )
-                .is_err()
+                if base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &inline.value)
+                    .is_err()
                 {
                     return Err(AppError::BadRequest(
                         "data.value must be valid base64".to_string(),

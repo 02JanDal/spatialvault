@@ -52,14 +52,12 @@ impl<'a> RoleManager<'a> {
     /// Grant a role to a user (for group membership)
     pub async fn grant_role_to_user(&self, role: &str, user: &str) -> AppResult<()> {
         if !is_valid_role_name(role) || !is_valid_role_name(user) {
-            return Err(AppError::BadRequest("Invalid role or user name".to_string()));
+            return Err(AppError::BadRequest(
+                "Invalid role or user name".to_string(),
+            ));
         }
 
-        let sql = format!(
-            "GRANT {} TO {}",
-            quote_ident(role),
-            quote_ident(user)
-        );
+        let sql = format!("GRANT {} TO {}", quote_ident(role), quote_ident(user));
         sqlx::query(&sql).execute(self.pool).await?;
 
         tracing::info!("Granted role {} to user {}", role, user);
@@ -69,14 +67,12 @@ impl<'a> RoleManager<'a> {
     /// Revoke a role from a user
     pub async fn revoke_role_from_user(&self, role: &str, user: &str) -> AppResult<()> {
         if !is_valid_role_name(role) || !is_valid_role_name(user) {
-            return Err(AppError::BadRequest("Invalid role or user name".to_string()));
+            return Err(AppError::BadRequest(
+                "Invalid role or user name".to_string(),
+            ));
         }
 
-        let sql = format!(
-            "REVOKE {} FROM {}",
-            quote_ident(role),
-            quote_ident(user)
-        );
+        let sql = format!("REVOKE {} FROM {}", quote_ident(role), quote_ident(user));
         sqlx::query(&sql).execute(self.pool).await?;
 
         tracing::info!("Revoked role {} from user {}", role, user);
@@ -85,12 +81,11 @@ impl<'a> RoleManager<'a> {
 
     /// Check if a role exists
     pub async fn role_exists(&self, role_name: &str) -> AppResult<bool> {
-        let result: (bool,) = sqlx::query_as(
-            "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)"
-        )
-        .bind(role_name)
-        .fetch_one(self.pool)
-        .await?;
+        let result: (bool,) =
+            sqlx::query_as("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)")
+                .bind(role_name)
+                .fetch_one(self.pool)
+                .await?;
 
         Ok(result.0)
     }
@@ -104,7 +99,9 @@ impl<'a> RoleManager<'a> {
         privileges: &[&str],
     ) -> AppResult<()> {
         if !is_valid_role_name(schema) || !is_valid_role_name(role) {
-            return Err(AppError::BadRequest("Invalid schema or role name".to_string()));
+            return Err(AppError::BadRequest(
+                "Invalid schema or role name".to_string(),
+            ));
         }
 
         // First grant USAGE on the schema so the role can access tables in it
@@ -137,7 +134,9 @@ impl<'a> RoleManager<'a> {
         role: &str,
     ) -> AppResult<()> {
         if !is_valid_role_name(schema) || !is_valid_role_name(role) {
-            return Err(AppError::BadRequest("Invalid schema or role name".to_string()));
+            return Err(AppError::BadRequest(
+                "Invalid schema or role name".to_string(),
+            ));
         }
 
         let sql = format!(
@@ -159,7 +158,10 @@ pub fn is_valid_role_name(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        && name.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+        && name
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
 }
 
 /// Quote an identifier for safe SQL construction

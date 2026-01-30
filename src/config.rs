@@ -102,8 +102,14 @@ impl fmt::Debug for S3Config {
             .field("endpoint", &self.endpoint)
             .field("bucket", &self.bucket)
             .field("region", &self.region)
-            .field("access_key_id", &self.access_key_id.as_ref().map(|_| "[REDACTED]"))
-            .field("secret_access_key", &self.secret_access_key.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "access_key_id",
+                &self.access_key_id.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "[REDACTED]"),
+            )
             .finish()
     }
 }

@@ -3,8 +3,8 @@
 //! Implements abstract test requirements from:
 //! http://www.opengis.net/spec/ogcapi-coverages-1/0.0/conf/core
 
+use crate::common::{TestApp, test_collection_request};
 use axum::http::StatusCode;
-use crate::common::{test_collection_request, TestApp};
 
 /// Test coverage description endpoint
 #[tokio::test]
@@ -50,7 +50,10 @@ async fn test_domain_set_retrieval() {
 
     // Get domain set
     let response = app
-        .get(&format!("/collections/{}/coverage/domainset", collection_id))
+        .get(&format!(
+            "/collections/{}/coverage/domainset",
+            collection_id
+        ))
         .await;
 
     response.assert_success();
@@ -80,7 +83,10 @@ async fn test_range_type_retrieval() {
 
     // Get range type
     let response = app
-        .get(&format!("/collections/{}/coverage/rangetype", collection_id))
+        .get(&format!(
+            "/collections/{}/coverage/rangetype",
+            collection_id
+        ))
         .await;
 
     response.assert_success();
@@ -89,7 +95,10 @@ async fn test_range_type_retrieval() {
     let body: serde_json::Value = response.json();
 
     assert!(body["type"].is_string(), "RangeType should have type");
-    assert!(body["field"].is_array(), "RangeType should have field array");
+    assert!(
+        body["field"].is_array(),
+        "RangeType should have field array"
+    );
 }
 
 /// Test coverage endpoint returns 400 for non-raster collections

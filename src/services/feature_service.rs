@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::api::features::Feature;
 use crate::api::features::crs::transform_geometry_sql;
 use crate::api::features::query::Cql2Parser;
-use crate::api::features::Feature;
 use crate::auth::quote_ident;
 use crate::db::{Collection, Database};
 use crate::error::{AppError, AppResult};
@@ -46,15 +46,8 @@ impl FeatureService {
                 .await
             }
             "raster" | "pointcloud" => {
-                self.list_items(
-                    &collection,
-                    collection_id,
-                    limit,
-                    offset,
-                    bbox,
-                    datetime,
-                )
-                .await
+                self.list_items(&collection, collection_id, limit, offset, bbox, datetime)
+                    .await
             }
             _ => Err(AppError::BadRequest(format!(
                 "Unknown collection type: {}",
@@ -81,10 +74,7 @@ impl FeatureService {
 
         // Add bbox filter
         if let Some(bbox_str) = bbox {
-            let parts: Vec<f64> = bbox_str
-                .split(',')
-                .filter_map(|s| s.parse().ok())
-                .collect();
+            let parts: Vec<f64> = bbox_str.split(',').filter_map(|s| s.parse().ok()).collect();
             if parts.len() == 4 {
                 let bbox_srid = bbox_crs.unwrap_or(storage_srid);
                 let bbox_geom = format!(
@@ -122,9 +112,7 @@ impl FeatureService {
             r#"SELECT COUNT(*) FROM {}.{} WHERE {}"#,
             quoted_schema, quoted_table, where_clause
         );
-        let count: (i64,) = sqlx::query_as(&count_sql)
-            .fetch_one(self.db.pool())
-            .await?;
+        let count: (i64,) = sqlx::query_as(&count_sql).fetch_one(self.db.pool()).await?;
 
         // Data query
         let sql = format!(
@@ -139,7 +127,11 @@ impl FeatureService {
             ORDER BY created_at DESC
             LIMIT {} OFFSET {}
             "#,
-            quoted_schema, quoted_table, where_clause, limit, offset,
+            quoted_schema,
+            quoted_table,
+            where_clause,
+            limit,
+            offset,
             geometry_expr = geometry_expr
         );
 
@@ -162,7 +154,11 @@ impl FeatureService {
             })
             .collect();
 
-        Ok((features, count.0 as usize, target_crs.unwrap_or(storage_srid)))
+        Ok((
+            features,
+            count.0 as usize,
+            target_crs.unwrap_or(storage_srid),
+        ))
     }
 
     /// List raster/pointcloud items from spatialvault.items (with assets)
@@ -181,10 +177,7 @@ impl FeatureService {
 
         // Parse bbox for parameterized query
         let bbox_coords: Option<[f64; 4]> = bbox.and_then(|bbox_str| {
-            let parts: Vec<f64> = bbox_str
-                .split(',')
-                .filter_map(|s| s.parse().ok())
-                .collect();
+            let parts: Vec<f64> = bbox_str.split(',').filter_map(|s| s.parse().ok()).collect();
             if parts.len() == 4 {
                 Some([parts[0], parts[1], parts[2], parts[3]])
             } else {
@@ -195,7 +188,10 @@ impl FeatureService {
         if bbox_coords.is_some() {
             where_clauses.push(format!(
                 "ST_Intersects(geometry, ST_MakeEnvelope(${}, ${}, ${}, ${}, 4326))",
-                param_index, param_index + 1, param_index + 2, param_index + 3
+                param_index,
+                param_index + 1,
+                param_index + 2,
+                param_index + 3
             ));
             param_index += 4;
         }
@@ -210,14 +206,16 @@ impl FeatureService {
                 let parts: Vec<&str> = dt.split('/').collect();
                 if parts.len() == 2 {
                     datetime_start = if parts[0] != ".." {
-                        Some(chrono::DateTime::parse_from_rfc3339(parts[0])
-                            .map_err(|_| AppError::BadRequest(format!("Invalid datetime start: {}", parts[0])))?)
+                        Some(chrono::DateTime::parse_from_rfc3339(parts[0]).map_err(|_| {
+                            AppError::BadRequest(format!("Invalid datetime start: {}", parts[0]))
+                        })?)
                     } else {
                         None
                     };
                     datetime_end = if parts[1] != ".." {
-                        Some(chrono::DateTime::parse_from_rfc3339(parts[1])
-                            .map_err(|_| AppError::BadRequest(format!("Invalid datetime end: {}", parts[1])))?)
+                        Some(chrono::DateTime::parse_from_rfc3339(parts[1]).map_err(|_| {
+                            AppError::BadRequest(format!("Invalid datetime end: {}", parts[1]))
+                        })?)
                     } else {
                         None
                     };
@@ -237,8 +235,10 @@ impl FeatureService {
                     datetime_exact = None;
                 }
             } else {
-                datetime_exact = Some(chrono::DateTime::parse_from_rfc3339(dt)
-                    .map_err(|_| AppError::BadRequest(format!("Invalid datetime: {}", dt)))?);
+                datetime_exact = Some(
+                    chrono::DateTime::parse_from_rfc3339(dt)
+                        .map_err(|_| AppError::BadRequest(format!("Invalid datetime: {}", dt)))?,
+                );
                 datetime_start = None;
                 datetime_end = None;
                 where_clauses.push(format!("datetime = ${}", param_index));
@@ -259,8 +259,7 @@ impl FeatureService {
         );
 
         // Build and execute count query
-        let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql)
-            .bind(collection.id);
+        let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql).bind(collection.id);
 
         if let Some(coords) = &bbox_coords {
             count_query = count_query
@@ -299,21 +298,26 @@ impl FeatureService {
             ORDER BY datetime DESC NULLS LAST, created_at DESC
             LIMIT ${} OFFSET ${}
             "#,
-            where_clause, param_index, param_index + 1
+            where_clause,
+            param_index,
+            param_index + 1
         );
 
         // Build and execute data query
-        let mut data_query = sqlx::query_as::<_, (
-            Uuid,
-            serde_json::Value,
-            f64,
-            f64,
-            f64,
-            f64,
-            Option<chrono::DateTime<chrono::Utc>>,
-            Option<serde_json::Value>,
-        )>(&sql)
-            .bind(collection.id);
+        let mut data_query = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                serde_json::Value,
+                f64,
+                f64,
+                f64,
+                f64,
+                Option<chrono::DateTime<chrono::Utc>>,
+                Option<serde_json::Value>,
+            ),
+        >(&sql)
+        .bind(collection.id);
 
         if let Some(coords) = &bbox_coords {
             data_query = data_query
@@ -343,32 +347,34 @@ impl FeatureService {
 
         let features: Vec<Feature> = rows
             .into_iter()
-            .map(|(id, geometry, minx, miny, maxx, maxy, datetime, properties)| {
-                let item_assets = assets_map
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!({}));
+            .map(
+                |(id, geometry, minx, miny, maxx, maxy, datetime, properties)| {
+                    let item_assets = assets_map
+                        .get(&id)
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({}));
 
-                let mut props = properties.unwrap_or(serde_json::json!({}));
-                if let Some(dt) = datetime {
-                    if let serde_json::Value::Object(ref mut map) = props {
-                        map.insert("datetime".to_string(), serde_json::json!(dt.to_rfc3339()));
+                    let mut props = properties.unwrap_or(serde_json::json!({}));
+                    if let Some(dt) = datetime {
+                        if let serde_json::Value::Object(ref mut map) = props {
+                            map.insert("datetime".to_string(), serde_json::json!(dt.to_rfc3339()));
+                        }
                     }
-                }
 
-                Feature {
-                    feature_type: "Feature".to_string(),
-                    id: id.to_string(),
-                    geometry,
-                    properties: props,
-                    links: None,
-                    bbox: Some(vec![minx, miny, maxx, maxy]),
-                    assets: Some(item_assets),
-                    collection: Some(collection_id.to_string()),
-                    stac_version: Some("1.0.0".to_string()),
-                    stac_extensions: Some(vec![]),
-                }
-            })
+                    Feature {
+                        feature_type: "Feature".to_string(),
+                        id: id.to_string(),
+                        geometry,
+                        properties: props,
+                        links: None,
+                        bbox: Some(vec![minx, miny, maxx, maxy]),
+                        assets: Some(item_assets),
+                        collection: Some(collection_id.to_string()),
+                        stac_version: Some("1.0.0".to_string()),
+                        stac_extensions: Some(vec![]),
+                    }
+                },
+            )
             .collect();
 
         Ok((features, count.0 as usize, 4326))
@@ -498,9 +504,7 @@ impl FeatureService {
                 self.get_vector_feature(&collection, feature_id, target_crs)
                     .await
             }
-            "raster" | "pointcloud" => {
-                self.get_item(&collection, collection_id, feature_id).await
-            }
+            "raster" | "pointcloud" => self.get_item(&collection, collection_id, feature_id).await,
             _ => Err(AppError::BadRequest(format!(
                 "Unknown collection type: {}",
                 collection.collection_type
@@ -662,18 +666,24 @@ impl FeatureService {
             storage_srid
         );
 
-        let (id, geom, props, version): (String, serde_json::Value, Option<serde_json::Value>, i64) =
-            sqlx::query_as(&sql)
-                .bind(geometry.to_string())
-                .bind(properties)
-                .fetch_one(self.db.pool())
-                .await?;
+        let (id, geom, props, version): (
+            String,
+            serde_json::Value,
+            Option<serde_json::Value>,
+            i64,
+        ) = sqlx::query_as(&sql)
+            .bind(geometry.to_string())
+            .bind(properties)
+            .fetch_one(self.db.pool())
+            .await?;
 
         // Increment collection version
-        sqlx::query("UPDATE spatialvault.collections SET version = version + 1 WHERE canonical_name = $1")
-            .bind(collection_id)
-            .execute(self.db.pool())
-            .await?;
+        sqlx::query(
+            "UPDATE spatialvault.collections SET version = version + 1 WHERE canonical_name = $1",
+        )
+        .bind(collection_id)
+        .execute(self.db.pool())
+        .await?;
 
         Ok((
             Feature {
@@ -705,12 +715,25 @@ impl FeatureService {
 
         match collection.collection_type.as_str() {
             "vector" => {
-                self.update_vector_feature(&collection, feature_id, expected_version, geometry, properties)
-                    .await
+                self.update_vector_feature(
+                    &collection,
+                    feature_id,
+                    expected_version,
+                    geometry,
+                    properties,
+                )
+                .await
             }
             "raster" | "pointcloud" => {
-                self.update_item_internal(&collection, collection_id, feature_id, expected_version, geometry, properties)
-                    .await
+                self.update_item_internal(
+                    &collection,
+                    collection_id,
+                    feature_id,
+                    expected_version,
+                    geometry,
+                    properties,
+                )
+                .await
             }
             _ => Err(AppError::BadRequest(format!(
                 "Unknown collection type: {}",
@@ -775,14 +798,20 @@ impl FeatureService {
             "#,
             quoted_schema,
             quoted_table,
-            updates.join(", ").replace("storage_srid", &storage_srid.to_string())
+            updates
+                .join(", ")
+                .replace("storage_srid", &storage_srid.to_string())
         );
 
-        let (id, geom, props, version): (String, serde_json::Value, Option<serde_json::Value>, i64) =
-            sqlx::query_as(&update_sql)
-                .bind(feature_id)
-                .fetch_one(&mut *tx)
-                .await?;
+        let (id, geom, props, version): (
+            String,
+            serde_json::Value,
+            Option<serde_json::Value>,
+            i64,
+        ) = sqlx::query_as(&update_sql)
+            .bind(feature_id)
+            .fetch_one(&mut *tx)
+            .await?;
 
         tx.commit().await?;
 
@@ -861,14 +890,18 @@ impl FeatureService {
             set_parts.join(", ")
         );
 
-        let (id, geom, props, version): (String, serde_json::Value, Option<serde_json::Value>, i64) =
-            sqlx::query_as(&update_sql)
-                .bind(item_id)
-                .bind(&collection.id)
-                .bind(geometry.map(|g| g.to_string()).unwrap_or_default())
-                .bind(properties)
-                .fetch_one(&mut *tx)
-                .await?;
+        let (id, geom, props, version): (
+            String,
+            serde_json::Value,
+            Option<serde_json::Value>,
+            i64,
+        ) = sqlx::query_as(&update_sql)
+            .bind(item_id)
+            .bind(&collection.id)
+            .bind(geometry.map(|g| g.to_string()).unwrap_or_default())
+            .bind(properties)
+            .fetch_one(&mut *tx)
+            .await?;
 
         tx.commit().await?;
 
@@ -905,12 +938,25 @@ impl FeatureService {
 
         match collection.collection_type.as_str() {
             "vector" => {
-                self.replace_vector_feature(&collection, feature_id, expected_version, geometry, properties)
-                    .await
+                self.replace_vector_feature(
+                    &collection,
+                    feature_id,
+                    expected_version,
+                    geometry,
+                    properties,
+                )
+                .await
             }
             "raster" | "pointcloud" => {
-                self.replace_item_internal(&collection, collection_id, feature_id, expected_version, geometry, properties)
-                    .await
+                self.replace_item_internal(
+                    &collection,
+                    collection_id,
+                    feature_id,
+                    expected_version,
+                    geometry,
+                    properties,
+                )
+                .await
             }
             _ => Err(AppError::BadRequest(format!(
                 "Unknown collection type: {}",
@@ -971,13 +1017,17 @@ impl FeatureService {
             quoted_schema, quoted_table, storage_srid
         );
 
-        let (id, geom, props, version): (String, serde_json::Value, Option<serde_json::Value>, i64) =
-            sqlx::query_as(&sql)
-                .bind(feature_id)
-                .bind(geometry.to_string())
-                .bind(properties)
-                .fetch_one(&mut *tx)
-                .await?;
+        let (id, geom, props, version): (
+            String,
+            serde_json::Value,
+            Option<serde_json::Value>,
+            i64,
+        ) = sqlx::query_as(&sql)
+            .bind(feature_id)
+            .bind(geometry.to_string())
+            .bind(properties)
+            .fetch_one(&mut *tx)
+            .await?;
 
         tx.commit().await?;
 
@@ -1053,15 +1103,19 @@ impl FeatureService {
             RETURNING id::text, ST_AsGeoJSON(geometry)::jsonb, properties, version
         "#;
 
-        let (id, geom, props, version): (String, serde_json::Value, Option<serde_json::Value>, i64) =
-            sqlx::query_as(sql)
-                .bind(item_id)
-                .bind(&collection.id)
-                .bind(geometry.to_string())
-                .bind(properties)
-                .bind(datetime)
-                .fetch_one(&mut *tx)
-                .await?;
+        let (id, geom, props, version): (
+            String,
+            serde_json::Value,
+            Option<serde_json::Value>,
+            i64,
+        ) = sqlx::query_as(sql)
+            .bind(item_id)
+            .bind(&collection.id)
+            .bind(geometry.to_string())
+            .bind(properties)
+            .bind(datetime)
+            .fetch_one(&mut *tx)
+            .await?;
 
         tx.commit().await?;
 
@@ -1266,10 +1320,12 @@ impl FeatureService {
                         let media_type = asset.get("type").and_then(|v| v.as_str());
                         let title = asset.get("title").and_then(|v| v.as_str());
                         let description = asset.get("description").and_then(|v| v.as_str());
-                        let roles: Option<Vec<String>> = asset
-                            .get("roles")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect());
+                        let roles: Option<Vec<String>> =
+                            asset.get("roles").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            });
                         let file_size = asset.get("file:size").and_then(|v| v.as_i64());
 
                         sqlx::query(
@@ -1303,7 +1359,10 @@ impl FeatureService {
 
         // Get assets for response
         let assets_map = self.get_assets_for_items(&[id]).await?;
-        let item_assets = assets_map.get(&id).cloned().unwrap_or_else(|| serde_json::json!({}));
+        let item_assets = assets_map
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
 
         let mut final_props = props.unwrap_or(serde_json::json!({}));
         if let Some(dt) = dt {
@@ -1391,9 +1450,22 @@ impl FeatureService {
             set_clauses.join(", ")
         );
 
-        let mut query = sqlx::query_as::<_, (Uuid, serde_json::Value, f64, f64, f64, f64, Option<chrono::DateTime<chrono::Utc>>, Option<serde_json::Value>, i64)>(&update_sql)
-            .bind(collection.id)
-            .bind(item_id);
+        let mut query = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                serde_json::Value,
+                f64,
+                f64,
+                f64,
+                f64,
+                Option<chrono::DateTime<chrono::Utc>>,
+                Option<serde_json::Value>,
+                i64,
+            ),
+        >(&update_sql)
+        .bind(collection.id)
+        .bind(item_id);
 
         if let Some(geom) = geometry {
             query = query.bind(geom.to_string());
@@ -1409,9 +1481,8 @@ impl FeatureService {
 
         query = query.bind(datetime);
 
-        let (id, geom, minx, miny, maxx, maxy, dt, props, version) = query
-            .fetch_one(&mut *tx)
-            .await?;
+        let (id, geom, minx, miny, maxx, maxy, dt, props, version) =
+            query.fetch_one(&mut *tx).await?;
 
         // Update assets if provided (merge semantics)
         if let Some(assets_obj) = assets {
@@ -1419,20 +1490,24 @@ impl FeatureService {
                 for (key, asset) in assets_map {
                     if asset.is_null() {
                         // Delete asset
-                        sqlx::query("DELETE FROM spatialvault.assets WHERE item_id = $1 AND key = $2")
-                            .bind(item_id)
-                            .bind(key)
-                            .execute(&mut *tx)
-                            .await?;
+                        sqlx::query(
+                            "DELETE FROM spatialvault.assets WHERE item_id = $1 AND key = $2",
+                        )
+                        .bind(item_id)
+                        .bind(key)
+                        .execute(&mut *tx)
+                        .await?;
                     } else if let Some(href) = asset.get("href").and_then(|v| v.as_str()) {
                         // Upsert asset
                         let media_type = asset.get("type").and_then(|v| v.as_str());
                         let title = asset.get("title").and_then(|v| v.as_str());
                         let description = asset.get("description").and_then(|v| v.as_str());
-                        let roles: Option<Vec<String>> = asset
-                            .get("roles")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect());
+                        let roles: Option<Vec<String>> =
+                            asset.get("roles").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            });
                         let file_size = asset.get("file:size").and_then(|v| v.as_i64());
 
                         sqlx::query(
@@ -1467,7 +1542,10 @@ impl FeatureService {
 
         // Get assets for response
         let assets_map = self.get_assets_for_items(&[id]).await?;
-        let item_assets = assets_map.get(&id).cloned().unwrap_or_else(|| serde_json::json!({}));
+        let item_assets = assets_map
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
 
         let mut final_props = props.unwrap_or(serde_json::json!({}));
         if let Some(dt) = dt {
@@ -1576,10 +1654,12 @@ impl FeatureService {
                         let media_type = asset.get("type").and_then(|v| v.as_str());
                         let title = asset.get("title").and_then(|v| v.as_str());
                         let description = asset.get("description").and_then(|v| v.as_str());
-                        let roles: Option<Vec<String>> = asset
-                            .get("roles")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect());
+                        let roles: Option<Vec<String>> =
+                            asset.get("roles").and_then(|v| v.as_array()).map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            });
                         let file_size = asset.get("file:size").and_then(|v| v.as_i64());
 
                         sqlx::query(
@@ -1607,7 +1687,10 @@ impl FeatureService {
 
         // Get assets for response
         let assets_map = self.get_assets_for_items(&[id]).await?;
-        let item_assets = assets_map.get(&id).cloned().unwrap_or_else(|| serde_json::json!({}));
+        let item_assets = assets_map
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
 
         let mut final_props = props.unwrap_or(serde_json::json!({}));
         if let Some(dt) = dt {

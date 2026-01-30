@@ -39,7 +39,10 @@ impl CoverageService {
     }
 
     /// Get the spatial extent of a collection by aggregating item geometries
-    async fn get_collection_extent(&self, collection_id: uuid::Uuid) -> AppResult<CollectionExtent> {
+    async fn get_collection_extent(
+        &self,
+        collection_id: uuid::Uuid,
+    ) -> AppResult<CollectionExtent> {
         let sql = r#"
             SELECT
                 ST_XMin(ST_Extent(geometry)) as minx,
@@ -57,9 +60,12 @@ impl CoverageService {
                 .await?;
 
         match extent {
-            Some((Some(minx), Some(miny), Some(maxx), Some(maxy))) => {
-                Ok(CollectionExtent { minx, miny, maxx, maxy })
-            }
+            Some((Some(minx), Some(miny), Some(maxx), Some(maxy))) => Ok(CollectionExtent {
+                minx,
+                miny,
+                maxx,
+                maxy,
+            }),
             _ => {
                 // Default to global extent if no items
                 Ok(CollectionExtent {
@@ -72,15 +78,13 @@ impl CoverageService {
         }
     }
 
-    pub async fn get_domainset(
-        &self,
-        username: &str,
-        collection_id: &str,
-    ) -> AppResult<DomainSet> {
+    pub async fn get_domainset(&self, username: &str, collection_id: &str) -> AppResult<DomainSet> {
         let collection = self
             .get_collection(username, collection_id)
             .await?
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Collection not found: {}", collection_id))
+            })?;
 
         if collection.collection_type != "raster" {
             return Err(AppError::BadRequest(
@@ -124,15 +128,13 @@ impl CoverageService {
         })
     }
 
-    pub async fn get_rangetype(
-        &self,
-        username: &str,
-        collection_id: &str,
-    ) -> AppResult<RangeType> {
+    pub async fn get_rangetype(&self, username: &str, collection_id: &str) -> AppResult<RangeType> {
         let collection = self
             .get_collection(username, collection_id)
             .await?
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Collection not found: {}", collection_id))
+            })?;
 
         if collection.collection_type != "raster" {
             return Err(AppError::BadRequest(
@@ -142,12 +144,11 @@ impl CoverageService {
 
         // Get number of items to use as hint for band count
         // In a full implementation, we would read the COG metadata
-        let item_count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM spatialvault.items WHERE collection_id = $1",
-        )
-        .bind(collection.id)
-        .fetch_one(self.db.pool())
-        .await?;
+        let item_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM spatialvault.items WHERE collection_id = $1")
+                .bind(collection.id)
+                .fetch_one(self.db.pool())
+                .await?;
 
         // Default to single band description (would be enhanced with GDAL metadata)
         Ok(RangeType {
@@ -156,10 +157,7 @@ impl CoverageService {
                 field_type: "Quantity".to_string(),
                 id: "band1".to_string(),
                 name: "Band 1".to_string(),
-                description: Some(format!(
-                    "Raster data from {} items",
-                    item_count.0
-                )),
+                description: Some(format!("Raster data from {} items", item_count.0)),
                 definition: "http://www.opengis.net/def/property/OGC/0/Radiance".to_string(),
                 uom: UnitOfMeasure {
                     uom_type: "UnitReference".to_string(),
@@ -178,7 +176,9 @@ impl CoverageService {
         let collection = self
             .get_collection(username, collection_id)
             .await?
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Collection not found: {}", collection_id))
+            })?;
 
         if collection.collection_type != "raster" {
             return Err(AppError::BadRequest(
@@ -231,8 +231,9 @@ impl CoverageService {
                 .fetch_optional(self.db.pool())
                 .await?;
 
-        let collection = collection
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+        let collection = collection.ok_or_else(|| {
+            AppError::NotFound(format!("Collection not found: {}", collection_id))
+        })?;
 
         let assets: Vec<(String, String)> = sqlx::query_as(
             r#"

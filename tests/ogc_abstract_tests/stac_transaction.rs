@@ -4,8 +4,8 @@
 //! - https://api.stacspec.org/v1.0.0/collections/extensions/transaction
 //! - https://api.stacspec.org/v1.0.0/ogcapi-features/extensions/transaction
 
+use crate::common::{TestApp, test_collection_request, test_stac_item_request};
 use axum::http::StatusCode;
-use crate::common::{test_collection_request, test_stac_item_request, TestApp};
 
 /// Test that conformance declaration includes STAC Collection Transaction extension
 #[tokio::test]
@@ -104,7 +104,11 @@ async fn test_replace_collection() {
     });
 
     let replace_response = app
-        .put_json(&format!("/collections/{}", collection_id), &replacement, &etag)
+        .put_json(
+            &format!("/collections/{}", collection_id),
+            &replacement,
+            &etag,
+        )
         .await;
 
     replace_response.assert_success();
@@ -184,7 +188,10 @@ async fn test_delete_collection_without_if_match() {
 
     // Delete without If-Match header - should succeed
     let response = app
-        .request_without_etag(axum::http::Method::DELETE, &format!("/collections/{}", collection_id))
+        .request_without_etag(
+            axum::http::Method::DELETE,
+            &format!("/collections/{}", collection_id),
+        )
         .await;
 
     // Should succeed when If-Match is not provided
@@ -359,7 +366,10 @@ async fn test_delete_item() {
 
     // Delete the item
     let delete_response = app
-        .delete(&format!("/collections/{}/items/{}", collection_id, item_id), &etag)
+        .delete(
+            &format!("/collections/{}/items/{}", collection_id, item_id),
+            &etag,
+        )
         .await;
 
     delete_response.assert_status(StatusCode::NO_CONTENT);
@@ -431,7 +441,11 @@ async fn test_put_with_wrong_etag_fails() {
     });
 
     let response = app
-        .patch_json(&format!("/collections/{}", collection_id), &update, "\"999\"")
+        .patch_json(
+            &format!("/collections/{}", collection_id),
+            &update,
+            "\"999\"",
+        )
         .await;
 
     // Should return 412 Precondition Failed

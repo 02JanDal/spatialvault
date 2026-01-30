@@ -46,10 +46,8 @@ impl StacCollection {
             links: vec![
                 Link::new(format!("{}/collections/{}", base_url, id), rel::SELF)
                     .with_type(media_type::JSON),
-                Link::new(format!("{}/stac", base_url), rel::ROOT)
-                    .with_type(media_type::JSON),
-                Link::new(format!("{}/stac", base_url), rel::PARENT)
-                    .with_type(media_type::JSON),
+                Link::new(format!("{}/stac", base_url), rel::ROOT).with_type(media_type::JSON),
+                Link::new(format!("{}/stac", base_url), rel::PARENT).with_type(media_type::JSON),
                 Link::new(format!("{}/collections/{}/items", base_url, id), rel::ITEMS)
                     .with_type(media_type::GEOJSON),
             ],
