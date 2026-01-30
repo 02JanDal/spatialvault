@@ -7,7 +7,7 @@ SpatialVault is a geospatial data management API server built with Rust. It prov
 ## Tech Stack
 
 - **Language**: Rust 1.93+ (edition 2024)
-- **Web Framework**: Axum 0.8 with Aide for OpenAPI generation
+- **Web Framework**: Axum 0.8 with Aide 0.15 for OpenAPI generation
 - **Database**: PostgreSQL with PostGIS (via SQLx 0.8)
 - **Storage**: S3-compatible object storage (via object_store 0.11)
 - **Async Runtime**: Tokio 1.x
