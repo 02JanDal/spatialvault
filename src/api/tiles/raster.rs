@@ -91,12 +91,9 @@ pub fn overview_level_for_zoom(z: u32, raster_resolution: f64, tile_size: u32) -
 /// Render a raster tile using GDAL
 /// This requires the `gdal-support` feature to be enabled
 #[cfg(feature = "gdal-support")]
-pub fn render_raster_tile_gdal(
-    cog_href: &str,
-    params: &RasterTileParams,
-) -> AppResult<Vec<u8>> {
-    use gdal::raster::{RasterBand, ResampleAlg};
+pub fn render_raster_tile_gdal(cog_href: &str, params: &RasterTileParams) -> AppResult<Vec<u8>> {
     use gdal::Dataset;
+    use gdal::raster::{RasterBand, ResampleAlg};
 
     // Convert S3 URL to GDAL VSI path
     let vsi_path = href_to_vsi_path(cog_href);
@@ -160,7 +157,8 @@ pub fn render_raster_tile_gdal(
         ((src_width as f64 * tile_size as f64) / ((tile_maxx - tile_minx) / pixel_width)) as usize,
     );
     let dst_height = (tile_size - dst_offset_y).min(
-        ((src_height as f64 * tile_size as f64) / ((tile_maxy - tile_miny) / pixel_height)) as usize,
+        ((src_height as f64 * tile_size as f64) / ((tile_maxy - tile_miny) / pixel_height))
+            as usize,
     );
 
     // Read bands and create image
@@ -260,7 +258,7 @@ pub fn render_raster_tile_gdal(
                 let dst_idx = (dst_row * tile_size + dst_col) * 4;
                 if src_idx < data.len() && dst_idx + 3 < rgba_buffer.len() {
                     let val = data[src_idx];
-                    rgba_buffer[dst_idx] = val;     // R
+                    rgba_buffer[dst_idx] = val; // R
                     rgba_buffer[dst_idx + 1] = val; // G
                     rgba_buffer[dst_idx + 2] = val; // B
                     rgba_buffer[dst_idx + 3] = 255; // A
@@ -294,7 +292,12 @@ pub fn create_transparent_buffer(size: usize) -> Vec<u8> {
 }
 
 /// Encode RGBA buffer to the specified format
-pub fn encode_image(rgba: &[u8], width: usize, height: usize, format: RasterFormat) -> AppResult<Vec<u8>> {
+pub fn encode_image(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    format: RasterFormat,
+) -> AppResult<Vec<u8>> {
     match format {
         RasterFormat::Png => encode_png(rgba, width, height),
         RasterFormat::Jpeg => encode_jpeg(rgba, width, height),
@@ -311,7 +314,8 @@ fn encode_png(rgba: &[u8], width: usize, height: usize) -> AppResult<Vec<u8>> {
 
     let mut png_data = Vec::new();
     {
-        let mut encoder = png::Encoder::new(Cursor::new(&mut png_data), width as u32, height as u32);
+        let mut encoder =
+            png::Encoder::new(Cursor::new(&mut png_data), width as u32, height as u32);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
         encoder.set_compression(png::Compression::Fast);
@@ -330,8 +334,8 @@ fn encode_png(rgba: &[u8], width: usize, height: usize) -> AppResult<Vec<u8>> {
 
 /// Encode RGBA buffer to JPEG
 fn encode_jpeg(rgba: &[u8], width: usize, height: usize) -> AppResult<Vec<u8>> {
-    use image::codecs::jpeg::JpegEncoder;
     use image::ImageEncoder;
+    use image::codecs::jpeg::JpegEncoder;
     use std::io::Cursor;
 
     // Convert RGBA to RGB (JPEG doesn't support alpha)
@@ -345,9 +349,7 @@ fn encode_jpeg(rgba: &[u8], width: usize, height: usize) -> AppResult<Vec<u8>> {
 
         // Alpha blending with white background
         let alpha = a as f32 / 255.0;
-        let blend = |c: u8| -> u8 {
-            ((c as f32 * alpha) + (255.0 * (1.0 - alpha))) as u8
-        };
+        let blend = |c: u8| -> u8 { ((c as f32 * alpha) + (255.0 * (1.0 - alpha))) as u8 };
 
         rgb_data.push(blend(r));
         rgb_data.push(blend(g));
@@ -358,7 +360,12 @@ fn encode_jpeg(rgba: &[u8], width: usize, height: usize) -> AppResult<Vec<u8>> {
     {
         let mut encoder = JpegEncoder::new_with_quality(Cursor::new(&mut jpeg_data), 85);
         encoder
-            .encode(&rgb_data, width as u32, height as u32, image::ExtendedColorType::Rgb8)
+            .encode(
+                &rgb_data,
+                width as u32,
+                height as u32,
+                image::ExtendedColorType::Rgb8,
+            )
             .map_err(|e| AppError::Processing(format!("Failed to encode JPEG: {}", e)))?;
     }
 
@@ -375,7 +382,8 @@ pub fn render_raster_tile(cog_href: &str, params: &RasterTileParams) -> AppResul
     {
         Err(AppError::Processing(
             "Raster tile rendering requires the 'gdal-support' feature. \
-            Build with: cargo build --features gdal-support".to_string(),
+            Build with: cargo build --features gdal-support"
+                .to_string(),
         ))
     }
 }

@@ -22,17 +22,15 @@ impl ItemService {
         datetime: Option<chrono::DateTime<chrono::Utc>>,
         properties: Option<&serde_json::Value>,
     ) -> AppResult<Item> {
-        let item: Item = sqlx::query_as(
-            &format!(
-                r#"
+        let item: Item = sqlx::query_as(&format!(
+            r#"
                 INSERT INTO spatialvault.items
                 (collection_id, geometry, datetime, properties)
                 VALUES ($1, ST_GeomFromText($2, {}), $3, $4)
                 RETURNING id, collection_id, datetime, properties, version, created_at, updated_at
                 "#,
-                srid
-            ),
-        )
+            srid
+        ))
         .bind(collection_id)
         .bind(geometry_wkt)
         .bind(datetime)
@@ -56,7 +54,8 @@ impl ItemService {
         file_size: Option<i64>,
         extra_fields: Option<&serde_json::Value>,
     ) -> AppResult<Asset> {
-        let roles_vec: Option<Vec<String>> = roles.map(|r| r.iter().map(|s| s.to_string()).collect());
+        let roles_vec: Option<Vec<String>> =
+            roles.map(|r| r.iter().map(|s| s.to_string()).collect());
 
         let asset: Asset = sqlx::query_as(
             r#"
@@ -98,7 +97,10 @@ impl ItemService {
     }
 
     /// Get item with geometry as GeoJSON
-    pub async fn get_item_with_geometry(&self, item_id: Uuid) -> AppResult<Option<ItemWithGeometry>> {
+    pub async fn get_item_with_geometry(
+        &self,
+        item_id: Uuid,
+    ) -> AppResult<Option<ItemWithGeometry>> {
         let item: Option<ItemWithGeometry> = sqlx::query_as(
             r#"
             SELECT

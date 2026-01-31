@@ -1,15 +1,15 @@
 use aide::{
     axum::{
-        routing::{delete_with, get_with, post_with},
         ApiRouter,
+        routing::{delete_with, get_with, post_with},
     },
     transform::TransformOperation,
 };
 use axum::{
-    extract::{Extension, State},
-    http::{header, HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::{Extension, State},
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -103,7 +103,8 @@ pub async fn list_shares(
     Ok(Json(SharesResponse {
         collection_id,
         shares,
-    }).into_response())
+    })
+    .into_response())
 }
 
 fn list_shares_docs(op: TransformOperation) -> TransformOperation {
@@ -179,9 +180,12 @@ pub async fn remove_share(
         let mut headers = HeaderMap::new();
         headers.insert(
             header::LOCATION,
-            format!("{}/collections/{}/sharing/{}", config.base_url, new_name, path.principal)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+            format!(
+                "{}/collections/{}/sharing/{}",
+                config.base_url, new_name, path.principal
+            )
+            .parse()
+            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
         );
         return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
     }
@@ -206,8 +210,7 @@ pub fn routes(service: Arc<CollectionService>) -> ApiRouter {
     ApiRouter::new()
         .api_route(
             "/collections/{collection_id}/sharing",
-            get_with(list_shares, list_shares_docs)
-                .post_with(add_share, add_share_docs),
+            get_with(list_shares, list_shares_docs).post_with(add_share, add_share_docs),
         )
         .api_route(
             "/collections/{collection_id}/sharing/{principal}",

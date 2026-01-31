@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::api::common::{media_type, rel, Link};
+use crate::api::common::{Link, media_type, rel};
 use crate::api::stac::item::{StacItem, StacItemProperties, StacSearchParams};
 use crate::db::Database;
 use crate::error::AppResult;
@@ -110,9 +110,7 @@ impl StacService {
             where_clause
         );
 
-        let count: (i64,) = sqlx::query_as(&count_sql)
-            .fetch_one(self.db.pool())
-            .await?;
+        let count: (i64,) = sqlx::query_as(&count_sql).fetch_one(self.db.pool()).await?;
 
         // Data query - get items
         let sql = format!(
@@ -266,16 +264,18 @@ impl StacService {
                 file_size,
             };
 
-            assets_map
-                .entry(item_id)
-                .or_default()
-                .insert(key, asset);
+            assets_map.entry(item_id).or_default().insert(key, asset);
         }
 
         // Convert to JSON values
         let result: HashMap<Uuid, serde_json::Value> = assets_map
             .into_iter()
-            .map(|(id, assets)| (id, serde_json::to_value(assets).unwrap_or(serde_json::json!({}))))
+            .map(|(id, assets)| {
+                (
+                    id,
+                    serde_json::to_value(assets).unwrap_or(serde_json::json!({})),
+                )
+            })
             .collect();
 
         Ok(result)

@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::api::collections::schemas::CollectionSchema;
 use crate::api::collections::sharing::{PermissionLevel, ShareEntry};
 use crate::api::common::{Bbox, Extent, SpatialExtent, TemporalExtent};
-use crate::auth::{is_valid_role_name, quote_ident, RoleManager};
+use crate::auth::{RoleManager, is_valid_role_name, quote_ident};
 use crate::db::{Collection, CollectionWithCrs, Database};
 use crate::error::{AppError, AppResult};
 
@@ -101,12 +101,12 @@ impl CollectionService {
     pub async fn check_alias_redirect(&self, collection_id: &str) -> AppResult<Option<String>> {
         // First check if there's an active collection with this exact name
         let active_collection = self.get_collection("", collection_id).await?;
-        
+
         if active_collection.is_some() {
             // There is an active collection with this name, no redirect
             return Ok(None);
         }
-        
+
         // No active collection, check for alias
         self.get_alias(collection_id).await
     }
@@ -127,9 +127,9 @@ impl CollectionService {
 
         // Parse canonical name to get schema and table name
         let parts: Vec<&str> = canonical_name.split(':').collect();
-        let schema_name = parts.first().ok_or_else(|| {
-            AppError::BadRequest("Invalid collection name".to_string())
-        })?;
+        let schema_name = parts
+            .first()
+            .ok_or_else(|| AppError::BadRequest("Invalid collection name".to_string()))?;
         let table_name = parts[1..].join("_");
 
         if table_name.is_empty() {
@@ -412,11 +412,15 @@ impl CollectionService {
         Ok(Some(Extent { spatial, temporal }))
     }
 
-    async fn compute_spatial_extent(&self, collection: &Collection) -> AppResult<Option<SpatialExtent>> {
-        let result: Option<(Option<f64>, Option<f64>, Option<f64>, Option<f64>)> = match collection.collection_type.as_str() {
-            "vector" => {
-                let sql = format!(
-                    r#"
+    async fn compute_spatial_extent(
+        &self,
+        collection: &Collection,
+    ) -> AppResult<Option<SpatialExtent>> {
+        let result: Option<(Option<f64>, Option<f64>, Option<f64>, Option<f64>)> =
+            match collection.collection_type.as_str() {
+                "vector" => {
+                    let sql = format!(
+                        r#"
                     SELECT
                         ST_XMin(extent) as minx,
                         ST_YMin(extent) as miny,
@@ -427,13 +431,13 @@ impl CollectionService {
                         FROM {}.{}
                     ) sub
                     "#,
-                    quote_ident(&collection.schema_name),
-                    quote_ident(&collection.table_name)
-                );
-                sqlx::query_as(&sql).fetch_optional(self.db.pool()).await?
-            }
-            "raster" | "pointcloud" => {
-                let sql = r#"
+                        quote_ident(&collection.schema_name),
+                        quote_ident(&collection.table_name)
+                    );
+                    sqlx::query_as(&sql).fetch_optional(self.db.pool()).await?
+                }
+                "raster" | "pointcloud" => {
+                    let sql = r#"
                     SELECT
                         ST_XMin(extent) as minx,
                         ST_YMin(extent) as miny,
@@ -445,13 +449,13 @@ impl CollectionService {
                         WHERE collection_id = $1
                     ) sub
                 "#;
-                sqlx::query_as(sql)
-                    .bind(collection.id)
-                    .fetch_optional(self.db.pool())
-                    .await?
-            }
-            _ => None,
-        };
+                    sqlx::query_as(sql)
+                        .bind(collection.id)
+                        .fetch_optional(self.db.pool())
+                        .await?
+                }
+                _ => None,
+            };
 
         match result {
             Some((Some(minx), Some(miny), Some(maxx), Some(maxy))) => Ok(Some(SpatialExtent {
@@ -462,22 +466,27 @@ impl CollectionService {
         }
     }
 
-    async fn compute_temporal_extent(&self, collection: &Collection) -> AppResult<Option<TemporalExtent>> {
-        let result: Option<(Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>)> =
-            match collection.collection_type.as_str() {
-                "raster" | "pointcloud" => {
-                    let sql = r#"
+    async fn compute_temporal_extent(
+        &self,
+        collection: &Collection,
+    ) -> AppResult<Option<TemporalExtent>> {
+        let result: Option<(
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        )> = match collection.collection_type.as_str() {
+            "raster" | "pointcloud" => {
+                let sql = r#"
                         SELECT MIN(datetime) as min_dt, MAX(datetime) as max_dt
                         FROM spatialvault.items
                         WHERE collection_id = $1 AND datetime IS NOT NULL
                     "#;
-                    sqlx::query_as(sql)
-                        .bind(collection.id)
-                        .fetch_optional(self.db.pool())
-                        .await?
-                }
-                _ => None,
-            };
+                sqlx::query_as(sql)
+                    .bind(collection.id)
+                    .fetch_optional(self.db.pool())
+                    .await?
+            }
+            _ => None,
+        };
 
         match result {
             Some((min_dt, max_dt)) if min_dt.is_some() || max_dt.is_some() => {
@@ -508,9 +517,7 @@ impl CollectionService {
             quote_ident(&collection.table_name)
         );
 
-        let result: Option<(i32,)> = sqlx::query_as(&sql)
-            .fetch_optional(self.db.pool())
-            .await?;
+        let result: Option<(i32,)> = sqlx::query_as(&sql).fetch_optional(self.db.pool()).await?;
 
         Ok(result.map(|(srid,)| srid))
     }
@@ -523,7 +530,9 @@ impl CollectionService {
         let collection = self
             .get_collection(username, collection_id)
             .await?
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Collection not found: {}", collection_id))
+            })?;
 
         // Get column information from PostgreSQL
         let columns: Vec<(String, String, String, Option<i32>)> = sqlx::query_as(
@@ -608,7 +617,9 @@ impl CollectionService {
         let collection = self
             .get_collection(username, collection_id)
             .await?
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Collection not found: {}", collection_id))
+            })?;
 
         // Check if user is owner (only owner can view shares)
         if collection.owner != username {
@@ -646,7 +657,10 @@ impl CollectionService {
         let mut shares = Vec::new();
         for (principal, privileges) in shares_map {
             // Determine permission level based on privileges
-            let permission = if privileges.iter().any(|p| p == "INSERT" || p == "UPDATE" || p == "DELETE") {
+            let permission = if privileges
+                .iter()
+                .any(|p| p == "INSERT" || p == "UPDATE" || p == "DELETE")
+            {
                 PermissionLevel::Write
             } else {
                 PermissionLevel::Read
@@ -688,7 +702,9 @@ impl CollectionService {
         let collection = self
             .get_collection(username, collection_id)
             .await?
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Collection not found: {}", collection_id))
+            })?;
 
         if collection.owner != username {
             return Err(AppError::Forbidden(
@@ -699,10 +715,7 @@ impl CollectionService {
         // Verify role exists (groups/users assumed to be pre-existing)
         let role_manager = RoleManager::new(self.db.pool());
         if !role_manager.role_exists(principal).await? {
-            return Err(AppError::NotFound(format!(
-                "Role not found: {}",
-                principal
-            )));
+            return Err(AppError::NotFound(format!("Role not found: {}", principal)));
         }
 
         // Grant privileges
@@ -732,7 +745,9 @@ impl CollectionService {
         let collection = self
             .get_collection(username, collection_id)
             .await?
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Collection not found: {}", collection_id))
+            })?;
 
         if collection.owner != username {
             return Err(AppError::Forbidden(
@@ -742,11 +757,7 @@ impl CollectionService {
 
         let role_manager = RoleManager::new(self.db.pool());
         role_manager
-            .revoke_table_privileges(
-                &collection.schema_name,
-                &collection.table_name,
-                principal,
-            )
+            .revoke_table_privileges(&collection.schema_name, &collection.table_name, principal)
             .await?;
 
         Ok(())

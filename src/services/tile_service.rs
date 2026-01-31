@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::api::tiles::raster::{render_raster_tile, RasterFormat, RasterTileParams};
+use crate::api::tiles::raster::{RasterFormat, RasterTileParams, render_raster_tile};
 use crate::api::tiles::vector::mvt_sql;
 use crate::db::{Collection, Database};
 use crate::error::{AppError, AppResult};
@@ -19,12 +19,11 @@ impl TileService {
         username: &str,
         collection_id: &str,
     ) -> AppResult<Option<Collection>> {
-        let collection: Option<Collection> = sqlx::query_as(
-            "SELECT * FROM spatialvault.collections WHERE canonical_name = $1",
-        )
-        .bind(collection_id)
-        .fetch_optional(self.db.pool())
-        .await?;
+        let collection: Option<Collection> =
+            sqlx::query_as("SELECT * FROM spatialvault.collections WHERE canonical_name = $1")
+                .bind(collection_id)
+                .fetch_optional(self.db.pool())
+                .await?;
 
         Ok(collection)
     }
@@ -40,7 +39,9 @@ impl TileService {
         let collection = self
             .get_collection(username, collection_id)
             .await?
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Collection not found: {}", collection_id))
+            })?;
 
         if collection.collection_type != "vector" {
             return Err(AppError::BadRequest(
@@ -62,9 +63,8 @@ impl TileService {
             storage_srid,
         );
 
-        let result: Option<(Vec<u8>,)> = sqlx::query_as(&sql)
-            .fetch_optional(self.db.pool())
-            .await?;
+        let result: Option<(Vec<u8>,)> =
+            sqlx::query_as(&sql).fetch_optional(self.db.pool()).await?;
 
         Ok(result.map(|(data,)| data).unwrap_or_default())
     }
@@ -81,7 +81,9 @@ impl TileService {
         let collection = self
             .get_collection("", collection_id)
             .await?
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Collection not found: {}", collection_id))
+            })?;
 
         if collection.collection_type != "raster" {
             return Err(AppError::BadRequest(
@@ -111,11 +113,9 @@ impl TileService {
 
         // Run GDAL rendering in blocking task (GDAL is not async)
         let href = cog_href.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            render_raster_tile(&href, &params)
-        })
-        .await
-        .map_err(|e| AppError::Processing(format!("Task join error: {}", e)))??;
+        let result = tokio::task::spawn_blocking(move || render_raster_tile(&href, &params))
+            .await
+            .map_err(|e| AppError::Processing(format!("Task join error: {}", e)))??;
 
         Ok(result)
     }
@@ -169,12 +169,11 @@ impl TileService {
 
         Ok(result.map(|(srid,)| srid).unwrap_or(4326))
     }
-
 }
 
 /// Create an empty/transparent tile in the requested format
 fn create_empty_tile(size: u32, format: RasterFormat) -> AppResult<Vec<u8>> {
-    use crate::api::tiles::raster::{encode_image, create_transparent_buffer};
+    use crate::api::tiles::raster::{create_transparent_buffer, encode_image};
 
     let buffer = create_transparent_buffer(size as usize);
     encode_image(&buffer, size as usize, size as usize, format)
@@ -182,14 +181,13 @@ fn create_empty_tile(size: u32, format: RasterFormat) -> AppResult<Vec<u8>> {
 
 impl TileService {
     /// Get raster asset URLs for a collection (for COG-enabled clients)
-    pub async fn get_raster_assets(
-        &self,
-        collection_id: &str,
-    ) -> AppResult<Vec<(String, String)>> {
+    pub async fn get_raster_assets(&self, collection_id: &str) -> AppResult<Vec<(String, String)>> {
         let collection = self
             .get_collection("", collection_id)
             .await?
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!("Collection not found: {}", collection_id))
+            })?;
 
         let assets: Vec<(String, String)> = sqlx::query_as(
             r#"

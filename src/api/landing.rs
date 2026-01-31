@@ -1,14 +1,14 @@
 use aide::{
-    axum::{routing::get_with, ApiRouter},
-    transform::TransformOperation,
     OperationIo,
+    axum::{ApiRouter, routing::get_with},
+    transform::TransformOperation,
 };
 use axum::{Extension, Json};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::sync::Arc;
 
-use super::common::{media_type, rel, Link};
+use super::common::{Link, media_type, rel};
 use crate::config::Config;
 
 /// OGC API Landing Page response

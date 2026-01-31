@@ -1,16 +1,13 @@
 use aide::{
-    axum::{
-        routing::get_with,
-        ApiRouter,
-    },
+    axum::{ApiRouter, routing::get_with},
     transform::TransformOperation,
 };
 use axum::{
+    Json,
     body::Body,
     extract::{Extension, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    Json,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,7 +15,7 @@ use std::sync::Arc;
 
 use super::raster::RasterFormat;
 use super::vector::{tile_matrix_sets, validate_tile_coords};
-use crate::api::common::{media_type, rel, Link};
+use crate::api::common::{Link, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::{AppError, AppResult};
@@ -33,10 +30,7 @@ pub struct TileQueryParams {
 }
 
 /// Negotiate raster tile format from Accept header and query parameter
-fn negotiate_raster_format(
-    headers: &HeaderMap,
-    query_format: Option<&str>,
-) -> RasterFormat {
+fn negotiate_raster_format(headers: &HeaderMap, query_format: Option<&str>) -> RasterFormat {
     // Query parameter takes precedence
     if let Some(fmt) = query_format {
         if let Some(format) = RasterFormat::from_extension(fmt) {
@@ -47,7 +41,10 @@ fn negotiate_raster_format(
     // Check Accept header
     if let Some(accept) = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()) {
         // Parse Accept header (simplified - doesn't handle quality values)
-        for media_type in accept.split(',').map(|s| s.trim().split(';').next().unwrap_or("")) {
+        for media_type in accept
+            .split(',')
+            .map(|s| s.trim().split(';').next().unwrap_or(""))
+        {
             match media_type {
                 "image/jpeg" | "image/jpg" => return RasterFormat::Jpeg,
                 "image/webp" => return RasterFormat::WebP,
@@ -148,7 +145,10 @@ pub async fn get_tileset(
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
+    if let Some(new_name) = collection_service
+        .check_alias_redirect(&collection_id)
+        .await?
+    {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::LOCATION,
@@ -255,9 +255,7 @@ fn get_tileset_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get tileset metadata")
         .description("Returns tileset metadata for a collection, including tile URL templates")
         .tag("Tiles")
-        .response_with::<200, Json<TilesetMetadata>, _>(|res| {
-            res.description("Tileset metadata")
-        })
+        .response_with::<200, Json<TilesetMetadata>, _>(|res| res.description("Tileset metadata"))
         .response_with::<404, (), _>(|res| res.description("Collection not found"))
 }
 
@@ -288,13 +286,19 @@ pub async fn get_tile(
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service.check_alias_redirect(&collection_id).await? {
+    if let Some(new_name) = collection_service
+        .check_alias_redirect(&collection_id)
+        .await?
+    {
         let mut redirect_headers = HeaderMap::new();
         redirect_headers.insert(
             header::LOCATION,
-            format!("{}/collections/{}/tiles/{}/{}/{}/{}", config.base_url, new_name, path.tile_matrix_set_id, path.z, path.y, path.x)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
+            format!(
+                "{}/collections/{}/tiles/{}/{}/{}/{}",
+                config.base_url, new_name, path.tile_matrix_set_id, path.z, path.y, path.x
+            )
+            .parse()
+            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
         );
         return Ok((StatusCode::TEMPORARY_REDIRECT, redirect_headers).into_response());
     }
@@ -383,8 +387,14 @@ fn get_tile_docs(op: TransformOperation) -> TransformOperation {
 
 pub fn routes(service: Arc<TileService>, collection_service: Arc<CollectionService>) -> ApiRouter {
     ApiRouter::new()
-        .api_route("/tileMatrixSets", get_with(list_tile_matrix_sets, list_tile_matrix_sets_docs))
-        .api_route("/collections/{collection_id}/tiles", get_with(get_tileset, get_tileset_docs))
+        .api_route(
+            "/tileMatrixSets",
+            get_with(list_tile_matrix_sets, list_tile_matrix_sets_docs),
+        )
+        .api_route(
+            "/collections/{collection_id}/tiles",
+            get_with(get_tileset, get_tileset_docs),
+        )
         .api_route(
             "/collections/{collection_id}/tiles/{tile_matrix_set_id}/{z}/{y}/{x}",
             get_with(get_tile, get_tile_docs),

@@ -53,9 +53,7 @@ fn default_limit() -> u32 {
 impl FeatureQueryParams {
     pub fn validate(&self) -> AppResult<()> {
         if self.limit == 0 {
-            return Err(AppError::BadRequest(
-                "Limit must be at least 1".to_string(),
-            ));
+            return Err(AppError::BadRequest("Limit must be at least 1".to_string()));
         }
 
         if self.limit > 10000 {
@@ -97,10 +95,12 @@ impl FeatureQueryParams {
 
         let mut coords = [0.0f64; 4];
         for (i, part) in parts.iter().enumerate() {
-            coords[i] = part
-                .trim()
-                .parse::<f64>()
-                .map_err(|_| AppError::BadRequest(format!("Invalid bbox coordinate '{}': must be a number", part.trim())))?;
+            coords[i] = part.trim().parse::<f64>().map_err(|_| {
+                AppError::BadRequest(format!(
+                    "Invalid bbox coordinate '{}': must be a number",
+                    part.trim()
+                ))
+            })?;
 
             // Check for NaN and Infinity
             if !coords[i].is_finite() {
@@ -234,7 +234,9 @@ impl Cql2Parser {
             // Interval (contains a vec of expressions)
             cql2::Expr::Interval { interval } => {
                 if interval.len() != 2 {
-                    return Err(AppError::BadRequest("Interval must have 2 elements".to_string()));
+                    return Err(AppError::BadRequest(
+                        "Interval must have 2 elements".to_string(),
+                    ));
                 }
                 let start_sql = Self::expr_to_postgis_sql(&interval[0], prefix)?;
                 let end_sql = Self::expr_to_postgis_sql(&interval[1], prefix)?;
@@ -244,7 +246,9 @@ impl Cql2Parser {
             // BBox
             cql2::Expr::BBox { bbox } => {
                 if bbox.len() < 4 {
-                    return Err(AppError::BadRequest("BBox must have at least 4 elements".to_string()));
+                    return Err(AppError::BadRequest(
+                        "BBox must have at least 4 elements".to_string(),
+                    ));
                 }
                 let coords: Vec<String> = bbox
                     .iter()
@@ -269,9 +273,7 @@ impl Cql2Parser {
             }
 
             // All operations (AND, OR, =, >, spatial functions, etc.)
-            cql2::Expr::Operation { op, args } => {
-                Self::operation_to_sql(op, args, prefix)
-            }
+            cql2::Expr::Operation { op, args } => Self::operation_to_sql(op, args, prefix),
         }
     }
 
@@ -317,7 +319,9 @@ impl Cql2Parser {
             "ilike" => return Self::binary_op(args, "ILIKE", prefix),
             "between" => {
                 if args.len() != 3 {
-                    return Err(AppError::BadRequest("BETWEEN requires 3 arguments".to_string()));
+                    return Err(AppError::BadRequest(
+                        "BETWEEN requires 3 arguments".to_string(),
+                    ));
                 }
                 let val = Self::expr_to_postgis_sql(&args[0], prefix)?;
                 let lower = Self::expr_to_postgis_sql(&args[1], prefix)?;
@@ -326,7 +330,9 @@ impl Cql2Parser {
             }
             "in" => {
                 if args.len() < 2 {
-                    return Err(AppError::BadRequest("IN requires at least 2 arguments".to_string()));
+                    return Err(AppError::BadRequest(
+                        "IN requires at least 2 arguments".to_string(),
+                    ));
                 }
                 let val = Self::expr_to_postgis_sql(&args[0], prefix)?;
                 let list: Vec<String> = args[1..]
@@ -337,7 +343,9 @@ impl Cql2Parser {
             }
             "isnull" | "is null" => {
                 if args.len() != 1 {
-                    return Err(AppError::BadRequest("IS NULL requires 1 argument".to_string()));
+                    return Err(AppError::BadRequest(
+                        "IS NULL requires 1 argument".to_string(),
+                    ));
                 }
                 let inner = Self::expr_to_postgis_sql(&args[0], prefix)?;
                 return Ok(format!("{} IS NULL", inner));
@@ -360,10 +368,7 @@ impl Cql2Parser {
         for (cql_name, pg_name) in spatial_mapping {
             if op_lower == *cql_name {
                 if args.len() != 2 {
-                    return Err(AppError::BadRequest(format!(
-                        "{} requires 2 arguments",
-                        op
-                    )));
+                    return Err(AppError::BadRequest(format!("{} requires 2 arguments", op)));
                 }
                 let arg1 = Self::expr_to_postgis_sql(&args[0], prefix)?;
                 let arg2 = Self::expr_to_postgis_sql(&args[1], prefix)?;
@@ -433,13 +438,18 @@ impl Cql2Parser {
     /// Convert CQL2 geometry to PostGIS
     fn geometry_to_sql(geom: &cql2::Geometry) -> AppResult<String> {
         match geom {
-            cql2::Geometry::Wkt(wkt) => {
-                Ok(format!("ST_GeomFromText('{}', 4326)", wkt.replace('\'', "''")))
-            }
+            cql2::Geometry::Wkt(wkt) => Ok(format!(
+                "ST_GeomFromText('{}', 4326)",
+                wkt.replace('\'', "''")
+            )),
             cql2::Geometry::GeoJSON(geojson) => {
-                let json_str = serde_json::to_string(geojson)
-                    .map_err(|e| AppError::Internal(format!("Failed to serialize GeoJSON: {}", e)))?;
-                Ok(format!("ST_GeomFromGeoJSON('{}')", json_str.replace('\'', "''")))
+                let json_str = serde_json::to_string(geojson).map_err(|e| {
+                    AppError::Internal(format!("Failed to serialize GeoJSON: {}", e))
+                })?;
+                Ok(format!(
+                    "ST_GeomFromGeoJSON('{}')",
+                    json_str.replace('\'', "''")
+                ))
             }
         }
     }
@@ -451,11 +461,7 @@ impl Cql2Parser {
             let parts: Vec<&str> = property.split('.').collect();
             if parts[0] == "properties" {
                 // Access into properties JSONB column
-                format!(
-                    "{}properties->>'{}'",
-                    prefix,
-                    parts[1..].join("'->>")
-                )
+                format!("{}properties->>'{}'", prefix, parts[1..].join("'->>"))
             } else {
                 format!("{}\"{}\"", prefix, parts[0])
             }

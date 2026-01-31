@@ -1,9 +1,9 @@
-use aide::openapi::{MediaType, Response as AideResponse};
 use aide::OperationOutput;
+use aide::openapi::{MediaType, Response as AideResponse};
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -66,12 +66,18 @@ impl IntoResponse for AppError {
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, "Unauthorized", msg.clone()),
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, "Forbidden", msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, "Conflict", msg.clone()),
-            AppError::PreconditionFailed(msg) => {
-                (StatusCode::PRECONDITION_FAILED, "PreconditionFailed", msg.clone())
-            }
+            AppError::PreconditionFailed(msg) => (
+                StatusCode::PRECONDITION_FAILED,
+                "PreconditionFailed",
+                msg.clone(),
+            ),
             AppError::Internal(msg) => {
                 tracing::error!("Internal error: {}", msg);
-                (StatusCode::INTERNAL_SERVER_ERROR, "InternalError", "An internal error occurred".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    "An internal error occurred".to_string(),
+                )
             }
             AppError::Database(e) => {
                 tracing::error!("Database error: {}", e);

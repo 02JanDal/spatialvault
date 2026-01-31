@@ -1,5 +1,5 @@
 use aide::{
-    axum::{routing::get_with, ApiRouter},
+    axum::{ApiRouter, routing::get_with},
     openapi::{
         Components, Contact, ExternalDocumentation, Info, License, OpenApi, ReferenceOr, Server,
         Tag,
@@ -23,14 +23,8 @@ pub fn create_openapi(config: &Config) -> OpenApi {
     // Build components with schemas from our types
     let mut schemas = IndexMap::new();
 
-    schemas.insert(
-        "Link".to_string(),
-        schemars_to_openapi_schema::<Link>(),
-    );
-    schemas.insert(
-        "Extent".to_string(),
-        schemars_to_openapi_schema::<Extent>(),
-    );
+    schemas.insert("Link".to_string(), schemars_to_openapi_schema::<Link>());
+    schemas.insert("Extent".to_string(), schemars_to_openapi_schema::<Extent>());
     schemas.insert(
         "CollectionResponse".to_string(),
         schemars_to_openapi_schema::<CollectionResponse>(),

@@ -3,8 +3,8 @@
 //! Implements abstract test requirements from:
 //! http://www.opengis.net/spec/ogcapi-processes-1/1.0/conf/core
 
+use crate::common::{TestApp, test_collection_request};
 use axum::http::StatusCode;
-use crate::common::{test_collection_request, TestApp};
 
 /// Test process list endpoint
 #[tokio::test]
@@ -23,10 +23,7 @@ async fn test_process_list() {
         .expect("processes must be an array");
 
     // Should have import-raster and import-pointcloud
-    let process_ids: Vec<&str> = processes
-        .iter()
-        .filter_map(|p| p["id"].as_str())
-        .collect();
+    let process_ids: Vec<&str> = processes.iter().filter_map(|p| p["id"].as_str()).collect();
 
     assert!(
         process_ids.contains(&"import-raster"),
@@ -161,9 +158,7 @@ async fn test_job_status() {
     create_response.assert_status(StatusCode::CREATED);
 
     let create_body: serde_json::Value = create_response.json();
-    let job_id = create_body["jobId"]
-        .as_str()
-        .expect("Should have jobId");
+    let job_id = create_body["jobId"].as_str().expect("Should have jobId");
 
     // Get job status
     let response = app.get(&format!("/jobs/{}", job_id)).await;
@@ -216,9 +211,7 @@ async fn test_job_dismiss() {
     create_response.assert_status(StatusCode::CREATED);
 
     let create_body: serde_json::Value = create_response.json();
-    let job_id = create_body["jobId"]
-        .as_str()
-        .expect("Should have jobId");
+    let job_id = create_body["jobId"].as_str().expect("Should have jobId");
 
     // Dismiss the job (we need a delete method without ETag for jobs)
     let response = app

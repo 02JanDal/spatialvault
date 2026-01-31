@@ -1,15 +1,15 @@
 use aide::{
     axum::{
-        routing::{delete_with, get_with, patch_with, post_with, put_with},
         ApiRouter,
+        routing::{delete_with, get_with, patch_with, post_with, put_with},
     },
     transform::TransformOperation,
 };
 use axum::{
-    extract::{Extension, Query, State},
-    http::{header, HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::{Extension, Query, State},
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ use super::schemas::{
     CollectionResponse, CollectionSchema, CollectionsResponse, CreateCollectionRequest,
     ListCollectionsParams, UpdateCollectionRequest,
 };
-use crate::api::common::{crs, media_type, rel, Extent, Link};
+use crate::api::common::{Extent, Link, crs, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::db::Collection;
@@ -27,7 +27,7 @@ use crate::services::CollectionService;
 /// Helper function to build a CollectionResponse from a Collection
 /// This ensures consistent structure between list and get endpoints
 /// by using the same link building logic.
-/// 
+///
 /// The link structure differs between list and detail views:
 /// - List: self, items, tiles/coverage (type-specific)
 /// - Detail: self, items, parent, tiles/coverage, schema
@@ -39,7 +39,7 @@ fn build_collection_response(
     include_extended_links: bool,
 ) -> CollectionResponse {
     let id = &collection.canonical_name;
-    
+
     // Base links that always appear
     let mut links = vec![
         Link::new(format!("{}/collections/{}", base_url, id), rel::SELF)
@@ -47,7 +47,7 @@ fn build_collection_response(
         Link::new(format!("{}/collections/{}/items", base_url, id), rel::ITEMS)
             .with_type(media_type::GEOJSON),
     ];
-    
+
     // Add type-specific links (always included for both list and detail)
     match collection.collection_type.as_str() {
         "vector" => {
@@ -67,15 +67,14 @@ fn build_collection_response(
         }
         _ => {}
     }
-    
+
     // Add extended links for detail view (parent and schema)
     if include_extended_links {
         // Parent link back to collections list
         links.push(
-            Link::new(format!("{}/collections", base_url), rel::PARENT)
-                .with_type(media_type::JSON),
+            Link::new(format!("{}/collections", base_url), rel::PARENT).with_type(media_type::JSON),
         );
-        
+
         // Add schema link
         links.push(
             Link::new(
@@ -86,7 +85,7 @@ fn build_collection_response(
             .with_title("Schema for this collection"),
         );
     }
-    
+
     CollectionResponse {
         id: id.clone(),
         title: collection.title.clone(),
@@ -120,7 +119,7 @@ pub async fn list_collections(
             base_url,
             extent,
             c.storage_crs,
-            false,  // List view: don't include parent and schema links
+            false, // List view: don't include parent and schema links
         ));
     }
 
@@ -183,7 +182,13 @@ pub async fn get_collection(
     let base_url = &config.base_url;
 
     // Build the response using the common helper, with all links included
-    let response = build_collection_response(&collection.as_collection(), base_url, extent, collection.storage_crs, true);
+    let response = build_collection_response(
+        &collection.as_collection(),
+        base_url,
+        extent,
+        collection.storage_crs,
+        true,
+    );
 
     // Create ETag from version
     let etag = format!("\"{}\"", collection.version);
@@ -249,9 +254,9 @@ pub async fn create_collection(
     let response = build_collection_response(
         &collection,
         base_url,
-        None,  // extent not computed for create response
-        request.crs,  // storage_crs from request
-        true,  // include all links for consistency
+        None,        // extent not computed for create response
+        request.crs, // storage_crs from request
+        true,        // include all links for consistency
     );
 
     let mut headers = HeaderMap::new();
@@ -288,16 +293,20 @@ pub async fn patch_collection(
     Json(request): Json<UpdateCollectionRequest>,
 ) -> AppResult<(HeaderMap, Json<CollectionResponse>)> {
     let collection_id = path.collection_id;
-    // If-Match header is optional - when present, enables optimistic locking
-    let expected_version: Option<i64> = headers
+    // If-Match header is required for PATCH to prevent lost updates
+    let etag_str = headers
         .get(header::IF_MATCH)
         .and_then(|v| v.to_str().ok())
-        .map(|etag| {
-            etag.trim_matches('"')
-                .parse()
-                .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))
-        })
-        .transpose()?;
+        .ok_or_else(|| {
+            AppError::PreconditionFailed("If-Match header is required for updates".to_string())
+        })?;
+
+    let expected_version: Option<i64> = Some(
+        etag_str
+            .trim_matches('"')
+            .parse()
+            .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))?,
+    );
 
     let collection = service
         .update_collection(
@@ -314,7 +323,7 @@ pub async fn patch_collection(
 
     // Fetch storage_crs from database
     let storage_crs = service.get_storage_crs(&collection).await?.unwrap_or(4326);
-    
+
     // Compute extent
     let extent = service.compute_extent(&collection).await?;
 
@@ -324,7 +333,7 @@ pub async fn patch_collection(
         base_url,
         extent,
         storage_crs,
-        true,  // include all links for consistency
+        true, // include all links for consistency
     );
 
     let mut response_headers = HeaderMap::new();
@@ -339,13 +348,13 @@ pub async fn patch_collection(
 fn patch_collection_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update collection (partial)")
         .description(
-            "Partially updates a collection using JSON Merge Patch. If-Match header is optional; when provided, enables optimistic locking.",
+            "Partially updates a collection using JSON Merge Patch. If-Match header is required to prevent lost updates.",
         )
         .tag("Collections")
         .response_with::<200, Json<CollectionResponse>, _>(|res| {
             res.description("Collection updated successfully")
         })
-        .response_with::<412, (), _>(|res| res.description("Precondition failed (ETag mismatch)"))
+        .response_with::<412, (), _>(|res| res.description("Precondition failed (ETag mismatch or missing)"))
 }
 
 /// PUT - Full replacement of a collection
@@ -358,23 +367,28 @@ pub async fn update_collection(
     Json(request): Json<CreateCollectionRequest>,
 ) -> AppResult<(HeaderMap, Json<CollectionResponse>)> {
     let collection_id = path.collection_id;
-    // If-Match header is optional - when present, enables optimistic locking
-    let expected_version: Option<i64> = headers
+    // If-Match header is required for PUT to prevent lost updates
+    let etag_str = headers
         .get(header::IF_MATCH)
         .and_then(|v| v.to_str().ok())
-        .map(|etag| {
-            etag.trim_matches('"')
-                .parse()
-                .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))
-        })
-        .transpose()?;
+        .ok_or_else(|| {
+            AppError::PreconditionFailed("If-Match header is required for updates".to_string())
+        })?;
+
+    let expected_version: Option<i64> = Some(
+        etag_str
+            .trim_matches('"')
+            .parse()
+            .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))?,
+    );
 
     // Validate that the ID in body matches the path (or is absent)
     // Per STAC spec, id in body should match path or server uses path id
     if request.id != collection_id
-        && !request
-            .id
-            .ends_with(&format!(":{}", collection_id.split(':').last().unwrap_or(&collection_id)))
+        && !request.id.ends_with(&format!(
+            ":{}",
+            collection_id.split(':').last().unwrap_or(&collection_id)
+        ))
     {
         return Err(AppError::BadRequest(
             "Collection ID in body does not match path".to_string(),
@@ -395,7 +409,7 @@ pub async fn update_collection(
 
     // Fetch storage_crs from database
     let storage_crs = service.get_storage_crs(&collection).await?.unwrap_or(4326);
-    
+
     // Compute extent
     let extent = service.compute_extent(&collection).await?;
 
@@ -405,7 +419,7 @@ pub async fn update_collection(
         base_url,
         extent,
         storage_crs,
-        true,  // include all links for consistency
+        true, // include all links for consistency
     );
 
     let mut response_headers = HeaderMap::new();
@@ -419,12 +433,16 @@ pub async fn update_collection(
 
 fn update_collection_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Replace collection")
-        .description("Fully replaces a collection. If-Match header is optional; when provided, enables optimistic locking.")
+        .description(
+            "Fully replaces a collection. If-Match header is required to prevent lost updates.",
+        )
         .tag("Collections")
         .response_with::<200, Json<CollectionResponse>, _>(|res| {
             res.description("Collection replaced successfully")
         })
-        .response_with::<412, (), _>(|res| res.description("Precondition failed (ETag mismatch)"))
+        .response_with::<412, (), _>(|res| {
+            res.description("Precondition failed (ETag mismatch or missing)")
+        })
 }
 
 pub async fn delete_collection(
@@ -498,9 +516,7 @@ fn get_collection_schema_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get collection schema")
         .description("Returns the JSON Schema describing features in this collection")
         .tag("Collections")
-        .response_with::<200, Json<CollectionSchema>, _>(|res| {
-            res.description("Collection schema")
-        })
+        .response_with::<200, Json<CollectionSchema>, _>(|res| res.description("Collection schema"))
 }
 
 pub fn routes(service: Arc<CollectionService>) -> ApiRouter {

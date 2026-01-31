@@ -1,14 +1,14 @@
 use aide::{
     axum::{
-        routing::{delete_with, get_with, post_with},
         ApiRouter,
+        routing::{delete_with, get_with, post_with},
     },
     transform::TransformOperation,
 };
 use axum::{
-    extract::{Extension, State},
-    http::{header, HeaderMap, StatusCode},
     Json,
+    extract::{Extension, State},
+    http::{HeaderMap, StatusCode, header},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::{import_pointcloud, import_raster};
-use crate::api::common::{media_type, rel, Link};
+use crate::api::common::{Link, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::{AppError, AppResult};
@@ -95,11 +95,13 @@ pub async fn list_processes(Extension(config): Extension<Arc<Config>>) -> Json<P
             description: Some("Import a raster file into a collection".to_string()),
             version: "1.0.0".to_string(),
             job_control_options: vec!["async-execute".to_string()],
-            links: vec![Link::new(
-                format!("{}/processes/{}", base_url, import_raster::PROCESS_ID),
-                rel::SELF,
-            )
-            .with_type(media_type::JSON)],
+            links: vec![
+                Link::new(
+                    format!("{}/processes/{}", base_url, import_raster::PROCESS_ID),
+                    rel::SELF,
+                )
+                .with_type(media_type::JSON),
+            ],
         },
         ProcessSummary {
             id: import_pointcloud::PROCESS_ID.to_string(),
@@ -107,11 +109,13 @@ pub async fn list_processes(Extension(config): Extension<Arc<Config>>) -> Json<P
             description: Some("Import a point cloud file into a collection".to_string()),
             version: "1.0.0".to_string(),
             job_control_options: vec!["async-execute".to_string()],
-            links: vec![Link::new(
-                format!("{}/processes/{}", base_url, import_pointcloud::PROCESS_ID),
-                rel::SELF,
-            )
-            .with_type(media_type::JSON)],
+            links: vec![
+                Link::new(
+                    format!("{}/processes/{}", base_url, import_pointcloud::PROCESS_ID),
+                    rel::SELF,
+                )
+                .with_type(media_type::JSON),
+            ],
         },
     ];
 
@@ -253,11 +257,7 @@ pub async fn execute_import_pointcloud(
     // Create job with inputs serialized to JSON
     let inputs_json = serde_json::to_value(&request.inputs)?;
     let job_id = service
-        .create_job(
-            &user.username,
-            import_pointcloud::PROCESS_ID,
-            &inputs_json,
-        )
+        .create_job(&user.username, import_pointcloud::PROCESS_ID, &inputs_json)
         .await?;
 
     Ok(create_job_response(
@@ -309,9 +309,7 @@ pub async fn list_jobs(
 
     Ok(Json(JobList {
         jobs: job_responses,
-        links: vec![
-            Link::new(format!("{}/jobs", base_url), rel::SELF).with_type(media_type::JSON),
-        ],
+        links: vec![Link::new(format!("{}/jobs", base_url), rel::SELF).with_type(media_type::JSON)],
     }))
 }
 
@@ -319,9 +317,7 @@ fn list_jobs_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List jobs")
         .description("Returns a list of all jobs owned by the authenticated user")
         .tag("Processes")
-        .response_with::<200, Json<JobList>, _>(|res| {
-            res.description("List of jobs")
-        })
+        .response_with::<200, Json<JobList>, _>(|res| res.description("List of jobs"))
 }
 
 /// Path parameters for single job endpoint
@@ -376,9 +372,7 @@ fn get_job_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get job status")
         .description("Returns the current status of a job")
         .tag("Processes")
-        .response_with::<200, Json<JobStatusResponse>, _>(|res| {
-            res.description("Job status")
-        })
+        .response_with::<200, Json<JobStatusResponse>, _>(|res| res.description("Job status"))
         .response_with::<404, (), _>(|res| res.description("Job not found"))
 }
 
@@ -421,9 +415,7 @@ fn get_job_results_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get job results")
         .description("Returns the results of a completed job")
         .tag("Processes")
-        .response_with::<200, Json<serde_json::Value>, _>(|res| {
-            res.description("Job results")
-        })
+        .response_with::<200, Json<serde_json::Value>, _>(|res| res.description("Job results"))
         .response_with::<400, (), _>(|res| res.description("Job not yet complete"))
         .response_with::<404, (), _>(|res| res.description("Job not found"))
 }
@@ -450,7 +442,10 @@ fn dismiss_job_docs(op: TransformOperation) -> TransformOperation {
 pub fn routes(service: Arc<ProcessService>) -> ApiRouter {
     ApiRouter::new()
         .api_route("/processes", get_with(list_processes, list_processes_docs))
-        .api_route("/processes/{process_id}", get_with(get_process, get_process_docs))
+        .api_route(
+            "/processes/{process_id}",
+            get_with(get_process, get_process_docs),
+        )
         .api_route(
             "/processes/import-raster/execution",
             post_with(execute_import_raster, execute_import_raster_docs),
@@ -462,9 +457,11 @@ pub fn routes(service: Arc<ProcessService>) -> ApiRouter {
         .api_route("/jobs", get_with(list_jobs, list_jobs_docs))
         .api_route(
             "/jobs/{job_id}",
-            get_with(get_job, get_job_docs)
-                .delete_with(dismiss_job, dismiss_job_docs),
+            get_with(get_job, get_job_docs).delete_with(dismiss_job, dismiss_job_docs),
         )
-        .api_route("/jobs/{job_id}/results", get_with(get_job_results, get_job_results_docs))
+        .api_route(
+            "/jobs/{job_id}/results",
+            get_with(get_job_results, get_job_results_docs),
+        )
         .with_state(service)
 }

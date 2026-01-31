@@ -1,7 +1,7 @@
-use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use openidconnect::{
-    core::{CoreClient, CoreProviderMetadata},
     ClientId, ClientSecret, IssuerUrl,
+    core::{CoreClient, CoreProviderMetadata},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -65,10 +65,9 @@ impl OidcValidator {
             .map_err(|e| AppError::Config(format!("Failed to create HTTP client: {}", e)))?;
 
         // Discover OIDC provider metadata
-        let provider_metadata =
-            CoreProviderMetadata::discover_async(issuer_url, &client)
-                .await
-                .map_err(|e| AppError::Config(format!("OIDC discovery failed: {}", e)))?;
+        let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, &client)
+            .await
+            .map_err(|e| AppError::Config(format!("OIDC discovery failed: {}", e)))?;
 
         // Fetch JWKS
         let jwks_uri = provider_metadata.jwks_uri();
