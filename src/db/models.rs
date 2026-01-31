@@ -53,7 +53,6 @@ impl CollectionWithCrs {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CollectionType {
     Vector,

@@ -1,5 +1,5 @@
 use aide::axum::ApiRouter;
-use axum::{middleware, Extension, Router};
+use axum::{Extension, Router, middleware};
 use std::env;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -28,9 +28,11 @@ use spatialvault::{
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
     tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            "spatialvault=debug,tower_http=debug,axum::rejection=trace".into()
-        }))
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "spatialvault=debug,tower_http=debug,axum::rejection=trace".into()
+            }),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
@@ -135,9 +137,18 @@ fn build_router(
     let protected_routes = ApiRouter::new()
         .merge(collections::handlers::routes(collection_service.clone()))
         .merge(collections::sharing::routes(collection_service.clone()))
-        .merge(features::handlers::routes(feature_service, collection_service.clone()))
-        .merge(tiles::handlers::routes(tile_service, collection_service.clone()))
-        .merge(coverages::handlers::routes(coverage_service, collection_service.clone()))
+        .merge(features::handlers::routes(
+            feature_service,
+            collection_service.clone(),
+        ))
+        .merge(tiles::handlers::routes(
+            tile_service,
+            collection_service.clone(),
+        ))
+        .merge(coverages::handlers::routes(
+            coverage_service,
+            collection_service.clone(),
+        ))
         .merge(processes::handlers::routes(process_service))
         .merge(stac::item::routes(stac_service))
         .layer(middleware::from_fn_with_state(

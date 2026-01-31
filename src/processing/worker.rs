@@ -90,12 +90,20 @@ impl JobWorker {
             None => return Ok(false),
         };
 
-        tracing::info!("Processing job {} ({}) for user {}", job_id, process_id, owner);
+        tracing::info!(
+            "Processing job {} ({}) for user {}",
+            job_id,
+            process_id,
+            owner
+        );
 
         // Process based on type
         let result = match process_id.as_str() {
             "import-raster" => self.process_import_raster(job_id, &owner, &inputs).await,
-            "import-pointcloud" => self.process_import_pointcloud(job_id, &owner, &inputs).await,
+            "import-pointcloud" => {
+                self.process_import_pointcloud(job_id, &owner, &inputs)
+                    .await
+            }
             _ => Err(AppError::Processing(format!(
                 "Unknown process: {}",
                 process_id
@@ -187,10 +195,7 @@ impl JobWorker {
 
         let item_id = Uuid::new_v4();
 
-        let s3_key = format!(
-            "{}/{}/{}.tif",
-            owner, collection.table_name, item_id
-        );
+        let s3_key = format!("{}/{}/{}.tif", owner, collection.table_name, item_id);
         let file_data = tokio::fs::read(&final_path).await?;
         let file_size = file_data.len() as i64;
         self.storage.put(&s3_key, Bytes::from(file_data)).await?;
@@ -198,7 +203,12 @@ impl JobWorker {
 
         // 7. Create item and asset records
         self.process_service
-            .update_job_status(job_id, "running", Some("Creating database records"), Some(90))
+            .update_job_status(
+                job_id,
+                "running",
+                Some("Creating database records"),
+                Some(90),
+            )
             .await?;
 
         let datetime = inputs
@@ -330,7 +340,12 @@ impl JobWorker {
 
         // 7. Create item and asset records
         self.process_service
-            .update_job_status(job_id, "running", Some("Creating database records"), Some(90))
+            .update_job_status(
+                job_id,
+                "running",
+                Some("Creating database records"),
+                Some(90),
+            )
             .await?;
 
         let datetime = inputs
@@ -453,12 +468,14 @@ impl JobWorker {
                     .temp_dir
                     .join(format!("{}_source.{}", job_id, extension));
                 tokio::fs::write(&local_path, &data).await?;
-                tracing::info!("Wrote inline data ({} bytes) to {:?}", data.len(), local_path);
+                tracing::info!(
+                    "Wrote inline data ({} bytes) to {:?}",
+                    data.len(),
+                    local_path
+                );
                 Ok(local_path)
             }
-            InputValue::Reference(reference) => {
-                self.download_file(&reference.href, job_id).await
-            }
+            InputValue::Reference(reference) => self.download_file(&reference.href, job_id).await,
         }
     }
 
@@ -471,13 +488,16 @@ impl JobWorker {
             .unwrap_or("bin");
 
         // Validate extension to prevent path traversal - must be alphanumeric only
-        let safe_extension = if extension.chars().all(|c| c.is_ascii_alphanumeric()) && extension.len() <= 10 {
-            extension
-        } else {
-            "bin"
-        };
+        let safe_extension =
+            if extension.chars().all(|c| c.is_ascii_alphanumeric()) && extension.len() <= 10 {
+                extension
+            } else {
+                "bin"
+            };
 
-        let local_path = self.temp_dir.join(format!("{}_source.{}", job_id, safe_extension));
+        let local_path = self
+            .temp_dir
+            .join(format!("{}_source.{}", job_id, safe_extension));
 
         if url.starts_with("s3://") {
             // Parse S3 URL: s3://bucket/key
@@ -523,11 +543,16 @@ impl JobWorker {
             Ok(meta) => {
                 let wkt = format!(
                     "POLYGON(({} {}, {} {}, {} {}, {} {}, {} {}))",
-                    meta.bounds[0], meta.bounds[1], // minx, miny
-                    meta.bounds[2], meta.bounds[1], // maxx, miny
-                    meta.bounds[2], meta.bounds[3], // maxx, maxy
-                    meta.bounds[0], meta.bounds[3], // minx, maxy
-                    meta.bounds[0], meta.bounds[1], // close polygon
+                    meta.bounds[0],
+                    meta.bounds[1], // minx, miny
+                    meta.bounds[2],
+                    meta.bounds[1], // maxx, miny
+                    meta.bounds[2],
+                    meta.bounds[3], // maxx, maxy
+                    meta.bounds[0],
+                    meta.bounds[3], // minx, maxy
+                    meta.bounds[0],
+                    meta.bounds[1], // close polygon
                 );
                 Ok((wkt, meta.srid))
             }
@@ -547,11 +572,16 @@ impl JobWorker {
                 // Use 2D bounds (ignore Z)
                 let wkt = format!(
                     "POLYGON(({} {}, {} {}, {} {}, {} {}, {} {}))",
-                    meta.bounds[0], meta.bounds[1], // minx, miny
-                    meta.bounds[3], meta.bounds[1], // maxx, miny
-                    meta.bounds[3], meta.bounds[4], // maxx, maxy
-                    meta.bounds[0], meta.bounds[4], // minx, maxy
-                    meta.bounds[0], meta.bounds[1], // close polygon
+                    meta.bounds[0],
+                    meta.bounds[1], // minx, miny
+                    meta.bounds[3],
+                    meta.bounds[1], // maxx, miny
+                    meta.bounds[3],
+                    meta.bounds[4], // maxx, maxy
+                    meta.bounds[0],
+                    meta.bounds[4], // minx, maxy
+                    meta.bounds[0],
+                    meta.bounds[1], // close polygon
                 );
                 Ok((wkt, meta.srid))
             }

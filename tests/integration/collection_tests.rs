@@ -1,7 +1,7 @@
 //! Collection CRUD integration tests
 
+use crate::common::{TestApp, test_collection_request};
 use axum::http::StatusCode;
-use crate::common::{test_collection_request, TestApp};
 
 /// Test creating a collection
 #[tokio::test]
@@ -22,7 +22,12 @@ async fn test_create_collection() {
     assert!(etag.is_some(), "Should have ETag header");
 
     let body: serde_json::Value = response.json();
-    assert!(body["id"].as_str().unwrap().contains("integration-create-test"));
+    assert!(
+        body["id"]
+            .as_str()
+            .unwrap()
+            .contains("integration-create-test")
+    );
 }
 
 /// Test getting a collection
@@ -48,7 +53,12 @@ async fn test_get_collection() {
 
     let body: serde_json::Value = response.json();
     assert_eq!(body["id"].as_str(), Some(collection_id));
-    assert!(body["title"].as_str().unwrap().contains("integration-get-test"));
+    assert!(
+        body["title"]
+            .as_str()
+            .unwrap()
+            .contains("integration-get-test")
+    );
 }
 
 /// Test updating a collection with ETag
@@ -129,7 +139,11 @@ async fn test_update_collection_wrong_etag() {
     });
 
     let response = app
-        .patch_json(&format!("/collections/{}", collection_id), &update, "\"999\"")
+        .patch_json(
+            &format!("/collections/{}", collection_id),
+            &update,
+            "\"999\"",
+        )
         .await;
 
     // Should return 412 Precondition Failed
@@ -179,7 +193,9 @@ async fn test_collection_response_synchronization() {
     let list_response = app.get("/collections").await;
     list_response.assert_success();
     let list_body: serde_json::Value = list_response.json();
-    let collections = list_body["collections"].as_array().expect("Should have collections array");
+    let collections = list_body["collections"]
+        .as_array()
+        .expect("Should have collections array");
     let list_collection = collections
         .iter()
         .find(|c| c["id"].as_str() == Some(collection_id))
@@ -192,34 +208,33 @@ async fn test_collection_response_synchronization() {
 
     // Verify common fields are the same
     assert_eq!(
-        list_collection["id"],
-        detail_collection["id"],
+        list_collection["id"], detail_collection["id"],
         "Collection ID should match"
     );
     assert_eq!(
-        list_collection["title"],
-        detail_collection["title"],
+        list_collection["title"], detail_collection["title"],
         "Collection title should match"
     );
     assert_eq!(
-        list_collection["description"],
-        detail_collection["description"],
+        list_collection["description"], detail_collection["description"],
         "Collection description should match"
     );
     assert_eq!(
-        list_collection["itemType"],
-        detail_collection["itemType"],
+        list_collection["itemType"], detail_collection["itemType"],
         "Collection itemType should match"
     );
     assert_eq!(
-        list_collection["crs"],
-        detail_collection["crs"],
+        list_collection["crs"], detail_collection["crs"],
         "Collection crs should match"
     );
 
     // Verify links structure
-    let list_links = list_collection["links"].as_array().expect("Should have links");
-    let detail_links = detail_collection["links"].as_array().expect("Should have links");
+    let list_links = list_collection["links"]
+        .as_array()
+        .expect("Should have links");
+    let detail_links = detail_collection["links"]
+        .as_array()
+        .expect("Should have links");
 
     // Both should have self link
     assert!(
@@ -227,47 +242,65 @@ async fn test_collection_response_synchronization() {
         "List collection should have self link"
     );
     assert!(
-        detail_links.iter().any(|l| l["rel"].as_str() == Some("self")),
+        detail_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("self")),
         "Detail collection should have self link"
     );
 
     // Both should have items link
     assert!(
-        list_links.iter().any(|l| l["rel"].as_str() == Some("items")),
+        list_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("items")),
         "List collection should have items link"
     );
     assert!(
-        detail_links.iter().any(|l| l["rel"].as_str() == Some("items")),
+        detail_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("items")),
         "Detail collection should have items link"
     );
 
     // Only detail should have parent link
     assert!(
-        !list_links.iter().any(|l| l["rel"].as_str() == Some("parent")),
+        !list_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("parent")),
         "List collection should NOT have parent link"
     );
     assert!(
-        detail_links.iter().any(|l| l["rel"].as_str() == Some("parent")),
+        detail_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("parent")),
         "Detail collection should have parent link"
     );
 
     // Only detail should have schema link (describedby)
     assert!(
-        !list_links.iter().any(|l| l["rel"].as_str() == Some("describedby")),
+        !list_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("describedby")),
         "List collection should NOT have describedby link"
     );
     assert!(
-        detail_links.iter().any(|l| l["rel"].as_str() == Some("describedby")),
+        detail_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("describedby")),
         "Detail collection should have describedby link"
     );
 
     // For vector collections, both should have tiles link
     assert!(
-        list_links.iter().any(|l| l["rel"].as_str() == Some("tiles")),
+        list_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("tiles")),
         "List collection should have tiles link for vector type"
     );
     assert!(
-        detail_links.iter().any(|l| l["rel"].as_str() == Some("tiles")),
+        detail_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("tiles")),
         "Detail collection should have tiles link for vector type"
     );
 
@@ -293,7 +326,9 @@ async fn test_raster_collection_links() {
     let list_response = app.get("/collections").await;
     list_response.assert_success();
     let list_body: serde_json::Value = list_response.json();
-    let collections = list_body["collections"].as_array().expect("Should have collections array");
+    let collections = list_body["collections"]
+        .as_array()
+        .expect("Should have collections array");
     let list_collection = collections
         .iter()
         .find(|c| c["id"].as_str() == Some(collection_id))
@@ -305,25 +340,37 @@ async fn test_raster_collection_links() {
     let detail_collection: serde_json::Value = detail_response.json();
 
     // Both should have coverage link for raster type
-    let list_links = list_collection["links"].as_array().expect("Should have links");
-    let detail_links = detail_collection["links"].as_array().expect("Should have links");
+    let list_links = list_collection["links"]
+        .as_array()
+        .expect("Should have links");
+    let detail_links = detail_collection["links"]
+        .as_array()
+        .expect("Should have links");
 
     assert!(
-        list_links.iter().any(|l| l["rel"].as_str() == Some("coverage")),
+        list_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("coverage")),
         "List collection should have coverage link for raster type"
     );
     assert!(
-        detail_links.iter().any(|l| l["rel"].as_str() == Some("coverage")),
+        detail_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("coverage")),
         "Detail collection should have coverage link for raster type"
     );
 
     // Should not have tiles link for raster type
     assert!(
-        !list_links.iter().any(|l| l["rel"].as_str() == Some("tiles")),
+        !list_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("tiles")),
         "List collection should not have tiles link for raster type"
     );
     assert!(
-        !detail_links.iter().any(|l| l["rel"].as_str() == Some("tiles")),
+        !detail_links
+            .iter()
+            .any(|l| l["rel"].as_str() == Some("tiles")),
         "Detail collection should not have tiles link for raster type"
     );
 }

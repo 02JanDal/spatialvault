@@ -82,14 +82,8 @@ mod tests {
 
     #[test]
     fn test_transform_geometry_sql() {
-        assert_eq!(
-            transform_geometry_sql("geom", 4326, None),
-            "geom"
-        );
-        assert_eq!(
-            transform_geometry_sql("geom", 4326, Some(4326)),
-            "geom"
-        );
+        assert_eq!(transform_geometry_sql("geom", 4326, None), "geom");
+        assert_eq!(transform_geometry_sql("geom", 4326, Some(4326)), "geom");
         assert_eq!(
             transform_geometry_sql("geom", 4326, Some(3857)),
             "ST_Transform(geom, 3857)"

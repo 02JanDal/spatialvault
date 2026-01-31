@@ -5,8 +5,8 @@
 //!
 //! Tests use TestApp with testcontainers for the database and mock authentication.
 
+use crate::common::{TestApp, assert_has_link, test_collection_request, test_feature_request};
 use axum::http::StatusCode;
-use crate::common::{assert_has_link, test_collection_request, test_feature_request, TestApp};
 
 /// A.2.1: Landing page response
 #[tokio::test]
@@ -122,7 +122,10 @@ async fn features_crud_workflow() {
     let created: serde_json::Value = create_response.json();
     let collection_id = created["id"].as_str().expect("Collection must have id");
     // The canonical name should be "testuser:test-features"
-    assert!(collection_id.contains("test-features"), "Collection id should contain test-features");
+    assert!(
+        collection_id.contains("test-features"),
+        "Collection id should contain test-features"
+    );
 
     // 2. Verify collection appears in list
     let list_response = app.get("/collections").await;
@@ -131,7 +134,9 @@ async fn features_crud_workflow() {
     let list_body: serde_json::Value = list_response.json();
     let collections = list_body["collections"].as_array().unwrap();
     assert!(
-        collections.iter().any(|c| c["id"].as_str() == Some(collection_id)),
+        collections
+            .iter()
+            .any(|c| c["id"].as_str() == Some(collection_id)),
         "Created collection should appear in list. Collections: {:?}",
         collections
     );
@@ -143,14 +148,19 @@ async fn features_crud_workflow() {
 
     let collection_body: serde_json::Value = collection_response.json();
     assert!(collection_body["id"].is_string(), "Collection must have id");
-    assert!(collection_body["links"].is_array(), "Collection must have links");
+    assert!(
+        collection_body["links"].is_array(),
+        "Collection must have links"
+    );
 
     let links = collection_body["links"].as_array().unwrap();
     assert!(assert_has_link(links, "self"), "Missing self link");
     assert!(assert_has_link(links, "items"), "Missing items link");
 
     // 4. Get features (empty initially) (A.2.6)
-    let features_response = app.get(&format!("/collections/{}/items", collection_id)).await;
+    let features_response = app
+        .get(&format!("/collections/{}/items", collection_id))
+        .await;
     features_response.assert_success();
     features_response.assert_content_type("application/geo+json");
 
@@ -160,7 +170,10 @@ async fn features_crud_workflow() {
         Some("FeatureCollection"),
         "Must be a FeatureCollection"
     );
-    assert!(features_body["features"].is_array(), "features must be an array");
+    assert!(
+        features_body["features"].is_array(),
+        "features must be an array"
+    );
 
     // 5. Create a feature
     let feature = test_feature_request();
@@ -170,26 +183,40 @@ async fn features_crud_workflow() {
     create_feature_response.assert_status(StatusCode::CREATED);
 
     let created_feature: serde_json::Value = create_feature_response.json();
-    let feature_id = created_feature["id"].as_str().expect("Feature must have id");
+    let feature_id = created_feature["id"]
+        .as_str()
+        .expect("Feature must have id");
 
     // 6. Get the specific feature (A.2.7)
     let feature_response = app
-        .get(&format!("/collections/{}/items/{}", collection_id, feature_id))
+        .get(&format!(
+            "/collections/{}/items/{}",
+            collection_id, feature_id
+        ))
         .await;
     feature_response.assert_success();
     feature_response.assert_content_type("application/geo+json");
 
     let feature_body: serde_json::Value = feature_response.json();
-    assert_eq!(feature_body["type"].as_str(), Some("Feature"), "Must be a Feature");
+    assert_eq!(
+        feature_body["type"].as_str(),
+        Some("Feature"),
+        "Must be a Feature"
+    );
     assert!(feature_body["id"].is_string(), "Feature must have id");
-    assert!(feature_body["geometry"].is_object(), "Feature must have geometry");
+    assert!(
+        feature_body["geometry"].is_object(),
+        "Feature must have geometry"
+    );
     assert!(
         feature_body["properties"].is_object() || feature_body["properties"].is_null(),
         "Feature must have properties"
     );
 
     // 7. Verify features list now has the feature
-    let features_response2 = app.get(&format!("/collections/{}/items", collection_id)).await;
+    let features_response2 = app
+        .get(&format!("/collections/{}/items", collection_id))
+        .await;
     features_response2.assert_success();
     let features_body2: serde_json::Value = features_response2.json();
     let features = features_body2["features"].as_array().unwrap();

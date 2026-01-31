@@ -2,8 +2,8 @@
 //!
 //! Tests authentication behavior with mock auth middleware.
 
-use axum::http::StatusCode;
 use crate::common::TestApp;
+use axum::http::StatusCode;
 
 /// Test that public endpoints work without authentication (mock auth still injects user)
 #[tokio::test]
@@ -33,7 +33,10 @@ async fn test_authenticated_requests_work() {
     response.assert_success();
 
     let body: serde_json::Value = response.json();
-    assert!(body["collections"].is_array(), "Should return collections array");
+    assert!(
+        body["collections"].is_array(),
+        "Should return collections array"
+    );
 }
 
 /// Test that collections can be created with authenticated user
@@ -53,7 +56,12 @@ async fn test_create_collection_with_auth() {
     response.assert_status(StatusCode::CREATED);
 
     let body: serde_json::Value = response.json();
-    assert!(body["id"].as_str().unwrap().contains("auth-test-collection"));
+    assert!(
+        body["id"]
+            .as_str()
+            .unwrap()
+            .contains("auth-test-collection")
+    );
 }
 
 /// Test that authenticated user can access their own collections
@@ -80,6 +88,8 @@ async fn test_user_can_access_own_collections() {
     get_response.assert_success();
 
     // User should be able to list items
-    let items_response = app.get(&format!("/collections/{}/items", collection_id)).await;
+    let items_response = app
+        .get(&format!("/collections/{}/items", collection_id))
+        .await;
     items_response.assert_success();
 }

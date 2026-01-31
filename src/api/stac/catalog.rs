@@ -1,16 +1,13 @@
 use aide::{
-    axum::{
-        routing::get_with,
-        ApiRouter,
-    },
+    axum::{ApiRouter, routing::get_with},
     transform::TransformOperation,
 };
-use axum::{extract::Extension, Json};
+use axum::{Json, extract::Extension};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::sync::Arc;
 
-use crate::api::common::{media_type, rel, Link};
+use crate::api::common::{Link, media_type, rel};
 use crate::config::Config;
 
 /// STAC Catalog root
@@ -40,10 +37,8 @@ pub async fn get_catalog(Extension(config): Extension<Arc<Config>>) -> Json<Stac
         title: "SpatialVault STAC Catalog".to_string(),
         description: "STAC catalog for SpatialVault geospatial data".to_string(),
         links: vec![
-            Link::new(format!("{}/stac", base_url), rel::SELF)
-                .with_type(media_type::JSON),
-            Link::new(format!("{}/stac", base_url), rel::ROOT)
-                .with_type(media_type::JSON),
+            Link::new(format!("{}/stac", base_url), rel::SELF).with_type(media_type::JSON),
+            Link::new(format!("{}/stac", base_url), rel::ROOT).with_type(media_type::JSON),
             Link::new(base_url, "parent")
                 .with_type(media_type::JSON)
                 .with_title("API Landing Page"),

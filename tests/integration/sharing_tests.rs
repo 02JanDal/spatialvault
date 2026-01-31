@@ -1,7 +1,7 @@
 //! Sharing and permissions integration tests
 
+use crate::common::{TestApp, test_collection_request};
 use axum::http::StatusCode;
-use crate::common::{test_collection_request, TestApp};
 
 /// Test listing shares for a collection
 #[tokio::test]
@@ -55,7 +55,10 @@ async fn test_add_share() {
     });
 
     let response = app
-        .post_json(&format!("/collections/{}/sharing", collection_id), &share_request)
+        .post_json(
+            &format!("/collections/{}/sharing", collection_id),
+            &share_request,
+        )
         .await;
 
     // Should succeed since testuser owns the collection
@@ -70,9 +73,9 @@ async fn test_add_share() {
     let list_body: serde_json::Value = list_response.json();
     let shares = list_body["shares"].as_array().expect("Should have shares");
 
-    let has_share = shares.iter().any(|s| {
-        s["principal"].as_str() == Some("otheruser")
-    });
+    let has_share = shares
+        .iter()
+        .any(|s| s["principal"].as_str() == Some("otheruser"));
     assert!(has_share, "Share should appear in list");
 }
 
@@ -100,7 +103,10 @@ async fn test_remove_share() {
     });
 
     let add_response = app
-        .post_json(&format!("/collections/{}/sharing", collection_id), &share_request)
+        .post_json(
+            &format!("/collections/{}/sharing", collection_id),
+            &share_request,
+        )
         .await;
     add_response.assert_status(StatusCode::CREATED);
 
@@ -123,8 +129,8 @@ async fn test_remove_share() {
     let list_body: serde_json::Value = list_response.json();
     let shares = list_body["shares"].as_array().expect("Should have shares");
 
-    let has_share = shares.iter().any(|s| {
-        s["principal"].as_str() == Some("shareuser")
-    });
+    let has_share = shares
+        .iter()
+        .any(|s| s["principal"].as_str() == Some("shareuser"));
     assert!(!has_share, "Share should be removed");
 }

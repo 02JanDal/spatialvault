@@ -3,8 +3,8 @@
 //! Implements abstract test requirements from:
 //! http://www.opengis.net/spec/ogcapi-features-2/1.0/conf/crs
 
+use crate::common::{TestApp, test_collection_request, test_feature_request};
 use axum::http::StatusCode;
-use crate::common::{test_collection_request, test_feature_request, TestApp};
 
 /// Test Content-Crs header in response
 #[tokio::test]
@@ -74,7 +74,9 @@ async fn test_crs_parameter() {
     response.assert_success();
 
     // Content-Crs should match requested CRS
-    let content_crs = response.header("Content-Crs").expect("Missing Content-Crs header");
+    let content_crs = response
+        .header("Content-Crs")
+        .expect("Missing Content-Crs header");
     assert!(
         content_crs.contains("3857"),
         "Content-Crs should indicate EPSG:3857, got: {}",

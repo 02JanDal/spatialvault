@@ -1,7 +1,7 @@
 use aide::{
-    axum::{routing::get_with, ApiRouter},
-    transform::TransformOperation,
     OperationIo,
+    axum::{ApiRouter, routing::get_with},
+    transform::TransformOperation,
 };
 use axum::Json;
 use schemars::JsonSchema;
@@ -30,7 +30,7 @@ pub mod classes {
         "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/geojson";
     pub const FEATURES_OAS30: &str = "http://www.opengis.net/spec/ogcapi-features-1/1.0/conf/oas30";
     pub const FEATURES_CRS: &str = "http://www.opengis.net/spec/ogcapi-features-2/1.0/conf/crs";
-    
+
     // OGC API Features Part 4 - CRUD
     pub const FEATURES_CREATE_REPLACE_DELETE: &str =
         "http://www.opengis.net/spec/ogcapi-features-4/1.0/conf/create-replace-delete";
@@ -44,16 +44,13 @@ pub mod classes {
     pub const TILES_TILESET: &str = "http://www.opengis.net/spec/ogcapi-tiles-1/1.0/conf/tileset";
 
     // OGC API Coverages
-    pub const COVERAGES_CORE: &str =
-        "http://www.opengis.net/spec/ogcapi-coverages-1/0.0/conf/core";
+    pub const COVERAGES_CORE: &str = "http://www.opengis.net/spec/ogcapi-coverages-1/0.0/conf/core";
     pub const COVERAGES_GEOTIFF: &str =
         "http://www.opengis.net/spec/ogcapi-coverages-1/0.0/conf/geotiff";
 
     // OGC API Processes
-    pub const PROCESSES_CORE: &str =
-        "http://www.opengis.net/spec/ogcapi-processes-1/1.0/conf/core";
-    pub const PROCESSES_JSON: &str =
-        "http://www.opengis.net/spec/ogcapi-processes-1/1.0/conf/json";
+    pub const PROCESSES_CORE: &str = "http://www.opengis.net/spec/ogcapi-processes-1/1.0/conf/core";
+    pub const PROCESSES_JSON: &str = "http://www.opengis.net/spec/ogcapi-processes-1/1.0/conf/json";
     pub const PROCESSES_OGC_PROCESS: &str =
         "http://www.opengis.net/spec/ogcapi-processes-1/1.0/conf/ogc-process-description";
     pub const PROCESSES_JOB_LIST: &str =
@@ -134,5 +131,8 @@ fn get_conformance_docs(op: TransformOperation) -> TransformOperation {
 }
 
 pub fn routes() -> ApiRouter {
-    ApiRouter::new().api_route("/conformance", get_with(get_conformance, get_conformance_docs))
+    ApiRouter::new().api_route(
+        "/conformance",
+        get_with(get_conformance, get_conformance_docs),
+    )
 }

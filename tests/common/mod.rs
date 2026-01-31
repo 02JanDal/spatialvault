@@ -5,20 +5,20 @@
 //! database and mock authentication.
 
 use axum::{
+    Extension, Router,
     body::Body,
     extract::{Request, State},
-    http::{header, Method, StatusCode},
+    http::{Method, StatusCode, header},
     middleware::Next,
     response::Response,
-    Extension, Router,
 };
 use http_body_util::BodyExt;
 use serde::de::DeserializeOwned;
 use std::sync::{Arc, Once};
 use testcontainers::{
+    ContainerAsync, GenericImage, ImageExt,
     core::{IntoContainerPort, WaitFor},
     runners::AsyncRunner,
-    ContainerAsync, GenericImage, ImageExt,
 };
 use tower::ServiceExt;
 
@@ -77,7 +77,9 @@ impl PostgisContainer {
     pub async fn start() -> Self {
         let container = GenericImage::new("postgis/postgis", "16-3.4")
             .with_exposed_port(5432.tcp())
-            .with_wait_for(WaitFor::message_on_stderr("database system is ready to accept connections"))
+            .with_wait_for(WaitFor::message_on_stderr(
+                "database system is ready to accept connections",
+            ))
             .with_env_var("POSTGRES_USER", "postgres")
             .with_env_var("POSTGRES_PASSWORD", "postgres")
             .with_env_var("POSTGRES_DB", "spatialvault_test")
@@ -112,7 +114,6 @@ impl PostgisContainer {
         )
     }
 }
-
 
 // ============================================================================
 // Mock Authentication
@@ -241,9 +242,7 @@ impl TestApp {
         );
 
         // Run migrations
-        db.run_migrations()
-            .await
-            .expect("Failed to run migrations");
+        db.run_migrations().await.expect("Failed to run migrations");
 
         // Create services
         let collection_service = Arc::new(CollectionService::new(db.clone()));
@@ -253,13 +252,13 @@ impl TestApp {
         let process_service = Arc::new(ProcessService::new(db.clone()));
         let stac_service = Arc::new(StacService::new(db.clone(), config.base_url.clone()));
 
-        // Create OpenAPI spec
-        let openapi = Arc::new(openapi::create_openapi(&config));
+        // Create OpenAPI spec (paths will be populated by finish_api)
+        let mut openapi = openapi::create_openapi(&config);
 
         // Build router with mock auth
         let router = Self::build_router(
             config.clone(),
-            openapi,
+            &mut openapi,
             mock_auth,
             collection_service,
             feature_service,
@@ -280,7 +279,7 @@ impl TestApp {
     /// Build the router with mock authentication
     fn build_router(
         config: Arc<Config>,
-        openapi: Arc<aide::openapi::OpenApi>,
+        openapi: &mut aide::openapi::OpenApi,
         mock_auth: MockAuthState,
         collection_service: Arc<CollectionService>,
         feature_service: Arc<FeatureService>,
@@ -289,32 +288,52 @@ impl TestApp {
         process_service: Arc<ProcessService>,
         stac_service: Arc<StacService>,
     ) -> Router {
+        use aide::axum::ApiRouter;
         use axum::middleware;
 
         // Public routes (no auth required)
-        let public_routes = Router::new()
+        let public_routes = ApiRouter::new()
             .merge(landing::routes())
             .merge(conformance::routes())
             .merge(openapi::docs_routes())
             .merge(stac::catalog::routes());
 
         // Protected routes (with mock auth)
-        let protected_routes = Router::new()
+        let protected_routes = ApiRouter::new()
             .merge(collections::handlers::routes(collection_service.clone()))
             .merge(collections::sharing::routes(collection_service.clone()))
-            .merge(features::handlers::routes(feature_service, collection_service.clone()))
-            .merge(tiles::handlers::routes(tile_service, collection_service.clone()))
-            .merge(coverages::handlers::routes(coverage_service, collection_service.clone()))
+            .merge(features::handlers::routes(
+                feature_service,
+                collection_service.clone(),
+            ))
+            .merge(tiles::handlers::routes(
+                tile_service,
+                collection_service.clone(),
+            ))
+            .merge(coverages::handlers::routes(
+                coverage_service,
+                collection_service.clone(),
+            ))
             .merge(processes::handlers::routes(process_service))
             .merge(stac::item::routes(stac_service))
-            .layer(middleware::from_fn_with_state(mock_auth, mock_auth_middleware));
+            .layer(middleware::from_fn_with_state(
+                mock_auth,
+                mock_auth_middleware,
+            ));
 
-        // Combine and add extensions
-        Router::new()
+        // Combine all routes and generate OpenAPI spec
+        let api_router = ApiRouter::new()
             .merge(public_routes)
             .merge(protected_routes)
+            .finish_api(openapi);
+
+        // Wrap OpenAPI in Arc for sharing
+        let openapi_arc = Arc::new(openapi.clone());
+
+        // Convert to regular Router and add extensions
+        Router::from(api_router)
             .layer(Extension(config))
-            .layer(Extension(openapi))
+            .layer(Extension(openapi_arc))
     }
 
     /// Make a GET request to the test app
@@ -554,7 +573,8 @@ impl TestResponse {
     /// Assert the status code
     pub fn assert_status(&self, expected: StatusCode) -> &Self {
         assert_eq!(
-            self.status, expected,
+            self.status,
+            expected,
             "Expected status {}, got {}. Body: {}",
             expected,
             self.status,
