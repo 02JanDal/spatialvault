@@ -207,3 +207,79 @@ pub mod etag {
             .map_err(|_| AppError::Internal("Invalid ETag format".to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue, header};
+
+    #[test]
+    fn test_extract_expected_version_none() {
+        let headers = HeaderMap::new();
+        let result = etag::extract_expected_version(&headers).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_expected_version_valid() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_MATCH, HeaderValue::from_static("\"42\""));
+        let result = etag::extract_expected_version(&headers).unwrap();
+        assert_eq!(result, Some(42));
+    }
+
+    #[test]
+    fn test_extract_expected_version_invalid_format() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_MATCH, HeaderValue::from_static("\"not-a-number\""));
+        let result = etag::extract_expected_version(&headers);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_extract_required_version_valid() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_MATCH, HeaderValue::from_static("\"123\""));
+        let result = etag::extract_required_version(&headers).unwrap();
+        assert_eq!(result, 123);
+    }
+
+    #[test]
+    fn test_extract_required_version_missing() {
+        let headers = HeaderMap::new();
+        let result = etag::extract_required_version(&headers);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::PreconditionFailed(_)));
+    }
+
+    #[test]
+    fn test_extract_required_version_invalid_format() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_MATCH, HeaderValue::from_static("\"invalid\""));
+        let result = etag::extract_required_version(&headers);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn test_create_etag_header() {
+        let result = etag::create_etag_header(42).unwrap();
+        assert_eq!(result.to_str().unwrap(), "\"42\"");
+    }
+
+    #[test]
+    fn test_create_etag_header_large_number() {
+        let result = etag::create_etag_header(9223372036854775807).unwrap();
+        assert_eq!(result.to_str().unwrap(), "\"9223372036854775807\"");
+    }
+
+    #[test]
+    fn test_extract_expected_version_without_quotes() {
+        let mut headers = HeaderMap::new();
+        // Even without quotes, it should work (trim_matches handles this)
+        headers.insert(header::IF_MATCH, HeaderValue::from_static("42"));
+        let result = etag::extract_expected_version(&headers).unwrap();
+        assert_eq!(result, Some(42));
+    }
+}
