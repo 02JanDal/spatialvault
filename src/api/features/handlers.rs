@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use super::crs::{content_crs_header, parse_crs_param};
 use super::query::FeatureQueryParams;
-use crate::api::common::{Link, media_type, rel};
+use crate::api::common::{Link, etag, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::{AppError, AppResult};
@@ -431,15 +431,7 @@ pub async fn update_feature(
 
     let feature_id = path.feature_id;
     // If-Match header is optional - when present, enables optimistic locking
-    let expected_version: Option<i64> = headers
-        .get(header::IF_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .map(|etag| {
-            etag.trim_matches('"')
-                .parse()
-                .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))
-        })
-        .transpose()?;
+    let expected_version = etag::extract_expected_version(&headers)?;
 
     // Extract datetime from properties if present
     let datetime = request
@@ -497,10 +489,7 @@ pub async fn update_feature(
     };
 
     let mut response_headers = HeaderMap::new();
-    response_headers.insert(
-        header::ETAG,
-        format!("\"{}\"", new_version).parse().unwrap(),
-    );
+    response_headers.insert(header::ETAG, etag::create_etag_header(new_version)?);
 
     Ok((response_headers, Json(feature)).into_response())
 }
@@ -545,15 +534,7 @@ pub async fn replace_feature(
 
     let feature_id = path.feature_id;
     // If-Match header is optional - when present, enables optimistic locking
-    let expected_version: Option<i64> = headers
-        .get(header::IF_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .map(|etag| {
-            etag.trim_matches('"')
-                .parse()
-                .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))
-        })
-        .transpose()?;
+    let expected_version = etag::extract_expected_version(&headers)?;
 
     // Extract datetime from properties if present
     let datetime = request
@@ -611,10 +592,7 @@ pub async fn replace_feature(
     };
 
     let mut response_headers = HeaderMap::new();
-    response_headers.insert(
-        header::ETAG,
-        format!("\"{}\"", new_version).parse().unwrap(),
-    );
+    response_headers.insert(header::ETAG, etag::create_etag_header(new_version)?);
 
     Ok((response_headers, Json(feature)).into_response())
 }
@@ -658,15 +636,7 @@ pub async fn delete_feature(
 
     let feature_id = path.feature_id;
     // If-Match header is optional - when present, enables optimistic locking
-    let expected_version: Option<i64> = headers
-        .get(header::IF_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .map(|etag| {
-            etag.trim_matches('"')
-                .parse()
-                .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))
-        })
-        .transpose()?;
+    let expected_version = etag::extract_expected_version(&headers)?;
 
     // Try vector delete first, fall back to item delete
     match service

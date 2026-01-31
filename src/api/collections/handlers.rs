@@ -17,7 +17,7 @@ use super::schemas::{
     CollectionResponse, CollectionSchema, CollectionsResponse, CreateCollectionRequest,
     ListCollectionsParams, UpdateCollectionRequest,
 };
-use crate::api::common::{Extent, Link, crs, media_type, rel};
+use crate::api::common::{Extent, Link, crs, etag, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::db::Collection;
@@ -206,12 +206,8 @@ pub async fn get_collection(
     );
 
     // Create ETag from version
-    let etag = format!("\"{}\"", collection.version);
     let mut headers = HeaderMap::new();
-    let etag_value = etag
-        .parse()
-        .map_err(|_| AppError::Internal("Invalid ETag format".to_string()))?;
-    headers.insert(header::ETAG, etag_value);
+    headers.insert(header::ETAG, etag::create_etag_header(collection.version)?);
 
     Ok((headers, Json(response)).into_response())
 }
@@ -279,10 +275,7 @@ pub async fn create_collection(
         .parse()
         .map_err(|_| AppError::Internal("Invalid location URL".to_string()))?;
     headers.insert(header::LOCATION, location_value);
-    let etag_value = format!("\"{}\"", collection.version)
-        .parse()
-        .map_err(|_| AppError::Internal("Invalid ETag format".to_string()))?;
-    headers.insert(header::ETAG, etag_value);
+    headers.insert(header::ETAG, etag::create_etag_header(collection.version)?);
 
     Ok((StatusCode::CREATED, headers, Json(response)))
 }
@@ -309,19 +302,7 @@ pub async fn patch_collection(
 ) -> AppResult<(HeaderMap, Json<CollectionResponse>)> {
     let collection_id = path.collection_id;
     // If-Match header is required for PATCH to prevent lost updates
-    let etag_str = headers
-        .get(header::IF_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| {
-            AppError::PreconditionFailed("If-Match header is required for updates".to_string())
-        })?;
-
-    let expected_version: Option<i64> = Some(
-        etag_str
-            .trim_matches('"')
-            .parse()
-            .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))?,
-    );
+    let expected_version = Some(etag::extract_required_version(&headers)?);
 
     let collection = service
         .update_collection(
@@ -352,10 +333,7 @@ pub async fn patch_collection(
     );
 
     let mut response_headers = HeaderMap::new();
-    let etag_value = format!("\"{}\"", collection.version)
-        .parse()
-        .map_err(|_| AppError::Internal("Invalid ETag format".to_string()))?;
-    response_headers.insert(header::ETAG, etag_value);
+    response_headers.insert(header::ETAG, etag::create_etag_header(collection.version)?);
 
     Ok((response_headers, Json(response)))
 }
@@ -383,19 +361,7 @@ pub async fn update_collection(
 ) -> AppResult<(HeaderMap, Json<CollectionResponse>)> {
     let collection_id = path.collection_id;
     // If-Match header is required for PUT to prevent lost updates
-    let etag_str = headers
-        .get(header::IF_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| {
-            AppError::PreconditionFailed("If-Match header is required for updates".to_string())
-        })?;
-
-    let expected_version: Option<i64> = Some(
-        etag_str
-            .trim_matches('"')
-            .parse()
-            .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))?,
-    );
+    let expected_version = Some(etag::extract_required_version(&headers)?);
 
     // Validate that the ID in body matches the path (or is absent)
     // Per STAC spec, id in body should match path or server uses path id
@@ -438,10 +404,7 @@ pub async fn update_collection(
     );
 
     let mut response_headers = HeaderMap::new();
-    let etag_value = format!("\"{}\"", collection.version)
-        .parse()
-        .map_err(|_| AppError::Internal("Invalid ETag format".to_string()))?;
-    response_headers.insert(header::ETAG, etag_value);
+    response_headers.insert(header::ETAG, etag::create_etag_header(collection.version)?);
 
     Ok((response_headers, Json(response)))
 }
@@ -468,15 +431,7 @@ pub async fn delete_collection(
 ) -> AppResult<StatusCode> {
     let collection_id = path.collection_id;
     // If-Match header is optional - when present, enables optimistic locking
-    let expected_version: Option<i64> = headers
-        .get(header::IF_MATCH)
-        .and_then(|v| v.to_str().ok())
-        .map(|etag| {
-            etag.trim_matches('"')
-                .parse()
-                .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))
-        })
-        .transpose()?;
+    let expected_version = etag::extract_expected_version(&headers)?;
 
     service
         .delete_collection(&user.username, &collection_id, expected_version)

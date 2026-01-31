@@ -1,5 +1,8 @@
+use axum::http::{HeaderMap, HeaderValue, header};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use crate::error::AppError;
 
 /// OGC API Link object
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -159,5 +162,48 @@ impl PaginationParams {
             return Err("Limit cannot exceed 10000".to_string());
         }
         Ok(())
+    }
+}
+
+/// ETag utilities for versioning and optimistic locking
+pub mod etag {
+    use super::*;
+
+    /// Extract expected version from If-Match header (optional)
+    /// Returns None if header is not present, or the parsed version if it is
+    pub fn extract_expected_version(headers: &HeaderMap) -> Result<Option<i64>, AppError> {
+        headers
+            .get(header::IF_MATCH)
+            .and_then(|v| v.to_str().ok())
+            .map(|etag| {
+                etag.trim_matches('"')
+                    .parse()
+                    .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))
+            })
+            .transpose()
+    }
+
+    /// Extract expected version from If-Match header (required)
+    /// Returns an error if header is not present or invalid
+    pub fn extract_required_version(headers: &HeaderMap) -> Result<i64, AppError> {
+        let etag_str = headers
+            .get(header::IF_MATCH)
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| {
+                AppError::PreconditionFailed("If-Match header is required for updates".to_string())
+            })?;
+
+        etag_str
+            .trim_matches('"')
+            .parse()
+            .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))
+    }
+
+    /// Create an ETag header value from a version number
+    /// The version is formatted as a quoted string per HTTP ETag spec
+    pub fn create_etag_header(version: i64) -> Result<HeaderValue, AppError> {
+        format!("\"{}\"", version)
+            .parse()
+            .map_err(|_| AppError::Internal("Invalid ETag format".to_string()))
     }
 }
