@@ -309,7 +309,7 @@ async fn test_collection_response_synchronization() {
     // - Detail endpoint computes them on demand
 }
 
-/// Test that raster collections have coverage links
+/// Test that raster collections have both coverage and tiles links
 #[tokio::test]
 async fn test_raster_collection_links() {
     let app = TestApp::new().await;
@@ -360,17 +360,17 @@ async fn test_raster_collection_links() {
         "Detail collection should have coverage link for raster type"
     );
 
-    // Should not have tiles link for raster type
+    // Should also have tiles link for raster type (raster collections support tiles)
     assert!(
-        !list_links
+        list_links
             .iter()
             .any(|l| l["rel"].as_str() == Some("tiles")),
-        "List collection should not have tiles link for raster type"
+        "List collection should have tiles link for raster type"
     );
     assert!(
-        !detail_links
+        detail_links
             .iter()
             .any(|l| l["rel"].as_str() == Some("tiles")),
-        "Detail collection should not have tiles link for raster type"
+        "Detail collection should have tiles link for raster type"
     );
 }

@@ -72,6 +72,11 @@ fn build_collection_response(
             );
         }
         "raster" => {
+            // Raster collections support both tiles and coverage endpoints
+            links.push(
+                Link::new(format!("{}/collections/{}/tiles", base_url, id), "tiles")
+                    .with_type(media_type::JSON),
+            );
             links.push(
                 Link::new(
                     format!("{}/collections/{}/coverage", base_url, id),
