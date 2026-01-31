@@ -252,13 +252,13 @@ impl TestApp {
         let process_service = Arc::new(ProcessService::new(db.clone()));
         let stac_service = Arc::new(StacService::new(db.clone(), config.base_url.clone()));
 
-        // Create OpenAPI spec
-        let openapi = Arc::new(openapi::create_openapi(&config));
+        // Create OpenAPI spec (paths will be populated by finish_api)
+        let mut openapi = openapi::create_openapi(&config);
 
         // Build router with mock auth
         let router = Self::build_router(
             config.clone(),
-            openapi,
+            &mut openapi,
             mock_auth,
             collection_service,
             feature_service,
@@ -279,7 +279,7 @@ impl TestApp {
     /// Build the router with mock authentication
     fn build_router(
         config: Arc<Config>,
-        openapi: Arc<aide::openapi::OpenApi>,
+        openapi: &mut aide::openapi::OpenApi,
         mock_auth: MockAuthState,
         collection_service: Arc<CollectionService>,
         feature_service: Arc<FeatureService>,
@@ -288,17 +288,18 @@ impl TestApp {
         process_service: Arc<ProcessService>,
         stac_service: Arc<StacService>,
     ) -> Router {
+        use aide::axum::ApiRouter;
         use axum::middleware;
 
         // Public routes (no auth required)
-        let public_routes = Router::new()
+        let public_routes = ApiRouter::new()
             .merge(landing::routes())
             .merge(conformance::routes())
             .merge(openapi::docs_routes())
             .merge(stac::catalog::routes());
 
         // Protected routes (with mock auth)
-        let protected_routes = Router::new()
+        let protected_routes = ApiRouter::new()
             .merge(collections::handlers::routes(collection_service.clone()))
             .merge(collections::sharing::routes(collection_service.clone()))
             .merge(features::handlers::routes(
@@ -320,12 +321,19 @@ impl TestApp {
                 mock_auth_middleware,
             ));
 
-        // Combine and add extensions
-        Router::new()
+        // Combine all routes and generate OpenAPI spec
+        let api_router = ApiRouter::new()
             .merge(public_routes)
             .merge(protected_routes)
+            .finish_api(openapi);
+
+        // Wrap OpenAPI in Arc for sharing
+        let openapi_arc = Arc::new(openapi.clone());
+
+        // Convert to regular Router and add extensions
+        Router::from(api_router)
             .layer(Extension(config))
-            .layer(Extension(openapi))
+            .layer(Extension(openapi_arc))
     }
 
     /// Make a GET request to the test app
