@@ -24,6 +24,21 @@ use crate::db::Collection;
 use crate::error::{AppError, AppResult};
 use crate::services::CollectionService;
 
+/// Build the list of CRSes supported for retrieving features from a collection
+/// Always includes WGS84, and adds storage CRS if it's different from WGS84
+fn build_crs_list(storage_crs: Option<i32>) -> Vec<String> {
+    let mut crs_list = vec![crs::WGS84.to_string()];
+
+    // Add storage CRS if it's different from WGS84 (4326)
+    if let Some(srid) = storage_crs {
+        if srid != 4326 {
+            crs_list.push(crs::srid_to_uri(srid));
+        }
+    }
+
+    crs_list
+}
+
 /// Helper function to build a CollectionResponse from a Collection
 /// This ensures consistent structure between list and get endpoints
 /// by using the same link building logic.
@@ -93,7 +108,7 @@ fn build_collection_response(
         links,
         extent,
         item_type: Some("feature".to_string()),
-        crs: Some(vec![crs::WGS84.to_string(), crs::EPSG_3857.to_string()]),
+        crs: Some(build_crs_list(Some(storage_crs))),
         storage_crs: Some(crs::srid_to_uri(storage_crs)),
     }
 }
