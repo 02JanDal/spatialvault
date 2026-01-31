@@ -24,19 +24,18 @@ use crate::db::Collection;
 use crate::error::{AppError, AppResult};
 use crate::services::CollectionService;
 
-
 /// Build the list of CRSes supported for retrieving features from a collection
 /// Always includes WGS84, and adds storage CRS if it's different from WGS84
 fn build_crs_list(storage_crs: Option<i32>) -> Vec<String> {
     let mut crs_list = vec![crs::WGS84.to_string()];
-    
+
     // Add storage CRS if it's different from WGS84 (4326)
     if let Some(srid) = storage_crs {
         if srid != 4326 {
             crs_list.push(crs::srid_to_uri(srid));
         }
     }
-    
+
     crs_list
 }
 
