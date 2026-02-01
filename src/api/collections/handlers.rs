@@ -233,15 +233,15 @@ pub async fn create_collection(
     State(service): State<Arc<CollectionService>>,
     Json(request): Json<CreateCollectionRequest>,
 ) -> AppResult<(StatusCode, HeaderMap, Json<CollectionResponse>)> {
-    // Determine canonical name (prepend username if not already prefixed)
-    let canonical_name = if request.id.starts_with(&format!("{}:", user.username)) {
-        request.id.clone()
-    } else {
-        format!("{}:{}", user.username, request.id)
-    };
-
     // Determine owner (default to current user)
     let owner = request.owner.unwrap_or_else(|| user.username.clone());
+
+    // Determine canonical name (prepend owner if not already prefixed)
+    let canonical_name = if request.id.starts_with(&format!("{}:", owner)) {
+        request.id.clone()
+    } else {
+        format!("{}:{}", owner, request.id)
+    };
 
     // Validate owner (user can only create in their own namespace or groups they belong to)
     if owner != user.username && !user.groups.contains(&owner) {
