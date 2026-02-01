@@ -231,7 +231,10 @@ mod tests {
     #[test]
     fn test_extract_expected_version_invalid_format() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::IF_MATCH, HeaderValue::from_static("\"not-a-number\""));
+        headers.insert(
+            header::IF_MATCH,
+            HeaderValue::from_static("\"not-a-number\""),
+        );
         let result = etag::extract_expected_version(&headers);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AppError::BadRequest(_)));
@@ -250,7 +253,10 @@ mod tests {
         let headers = HeaderMap::new();
         let result = etag::extract_required_version(&headers);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::PreconditionFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            AppError::PreconditionFailed(_)
+        ));
     }
 
     #[test]

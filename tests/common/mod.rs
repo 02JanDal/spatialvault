@@ -224,7 +224,6 @@ impl TestApp {
             database: DatabaseConfig {
                 url: container.connection_url(),
                 max_connections: 5,
-                service_role: "postgres".to_string(), // Use postgres for testing
             },
             oidc: OidcConfig {
                 issuer_url: "http://localhost".to_string(), // Not used with mock auth
@@ -436,6 +435,41 @@ impl TestApp {
             .execute(self.db.pool())
             .await
             .expect("Failed to ensure role exists");
+    }
+
+    /// Create a new TestApp instance sharing the same database but with a different user.
+    /// Efficient for multi-user authorization tests - no new container needed.
+    pub fn spawn_user(&self, mock_auth: MockAuthState) -> TestApp {
+        let collection_service = Arc::new(CollectionService::new(self.db.clone()));
+        let feature_service = Arc::new(FeatureService::new(self.db.clone()));
+        let tile_service = Arc::new(TileService::new(self.db.clone()));
+        let coverage_service = Arc::new(CoverageService::new(self.db.clone()));
+        let process_service = Arc::new(ProcessService::new(self.db.clone()));
+        let stac_service = Arc::new(StacService::new(
+            self.db.clone(),
+            self.config.base_url.clone(),
+        ));
+
+        let mut openapi = openapi::create_openapi(&self.config);
+
+        let router = Self::build_router(
+            self.config.clone(),
+            &mut openapi,
+            mock_auth,
+            collection_service,
+            feature_service,
+            tile_service,
+            coverage_service,
+            process_service,
+            stac_service,
+        );
+
+        TestApp {
+            router,
+            db: self.db.clone(),
+            config: self.config.clone(),
+            _container: None, // Don't own the container
+        }
     }
 
     /// Make a request with specific headers

@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use sqlx::Executor;
+
 use crate::api::features::Feature;
 use crate::api::features::crs::transform_geometry_sql;
 use crate::api::features::query::Cql2Parser;
@@ -30,7 +32,7 @@ impl FeatureService {
         datetime: Option<&str>,
         filter: Option<&str>,
     ) -> AppResult<(Vec<Feature>, usize, i32)> {
-        let collection = self.get_collection(collection_id).await?;
+        let collection = self.get_collection(username, collection_id).await?;
 
         match collection.collection_type.as_str() {
             "vector" => {
@@ -497,7 +499,7 @@ impl FeatureService {
         feature_id: Uuid,
         target_crs: Option<i32>,
     ) -> AppResult<Option<(Feature, i64, i32)>> {
-        let collection = self.get_collection(collection_id).await?;
+        let collection = self.get_collection(username, collection_id).await?;
 
         match collection.collection_type.as_str() {
             "vector" => {
@@ -645,7 +647,7 @@ impl FeatureService {
         geometry: &serde_json::Value,
         properties: &serde_json::Value,
     ) -> AppResult<(Feature, i64)> {
-        let collection = self.get_collection(collection_id).await?;
+        let collection = self.get_collection(username, collection_id).await?;
 
         if collection.collection_type != "vector" {
             return Err(AppError::BadRequest(
@@ -654,6 +656,9 @@ impl FeatureService {
         }
 
         let storage_srid = self.get_storage_srid(&collection).await?;
+
+        // Execute as the user to enforce PostgreSQL permissions
+        let mut tx = self.db.begin_as(username).await?;
 
         let sql = format!(
             r#"
@@ -674,16 +679,19 @@ impl FeatureService {
         ) = sqlx::query_as(&sql)
             .bind(geometry.to_string())
             .bind(properties)
-            .fetch_one(self.db.pool())
+            .fetch_one(&mut *tx)
             .await?;
 
-        // Increment collection version
+        // Increment collection version (as service user, not the user)
+        tx.execute("RESET ROLE").await?;
         sqlx::query(
             "UPDATE spatialvault.collections SET version = version + 1 WHERE canonical_name = $1",
         )
         .bind(collection_id)
-        .execute(self.db.pool())
+        .execute(&mut *tx)
         .await?;
+
+        tx.commit().await?;
 
         Ok((
             Feature {
@@ -711,11 +719,12 @@ impl FeatureService {
         geometry: Option<&serde_json::Value>,
         properties: Option<&serde_json::Value>,
     ) -> AppResult<(Feature, i64)> {
-        let collection = self.get_collection(collection_id).await?;
+        let collection = self.get_collection(username, collection_id).await?;
 
         match collection.collection_type.as_str() {
             "vector" => {
                 self.update_vector_feature(
+                    username,
                     &collection,
                     feature_id,
                     expected_version,
@@ -744,17 +753,22 @@ impl FeatureService {
 
     async fn update_vector_feature(
         &self,
+        username: &str,
         collection: &Collection,
         feature_id: Uuid,
         expected_version: Option<i64>,
         geometry: Option<&serde_json::Value>,
         properties: Option<&serde_json::Value>,
     ) -> AppResult<(Feature, i64)> {
+        // Check write permission first (before version check for proper error ordering)
+        self.check_write_permission(username, collection).await?;
+
         let storage_srid = self.get_storage_srid(collection).await?;
         let quoted_schema = quote_ident(&collection.schema_name);
         let quoted_table = quote_ident(&collection.table_name);
 
-        let mut tx = self.db.pool().begin().await?;
+        // Execute as the user to enforce PostgreSQL permissions
+        let mut tx = self.db.begin_as(username).await?;
 
         // Lock and check version
         let check_sql = format!(
@@ -934,11 +948,12 @@ impl FeatureService {
         geometry: &serde_json::Value,
         properties: &serde_json::Value,
     ) -> AppResult<(Feature, i64)> {
-        let collection = self.get_collection(collection_id).await?;
+        let collection = self.get_collection(username, collection_id).await?;
 
         match collection.collection_type.as_str() {
             "vector" => {
                 self.replace_vector_feature(
+                    username,
                     &collection,
                     feature_id,
                     expected_version,
@@ -967,6 +982,7 @@ impl FeatureService {
 
     async fn replace_vector_feature(
         &self,
+        username: &str,
         collection: &Collection,
         feature_id: Uuid,
         expected_version: Option<i64>,
@@ -975,7 +991,8 @@ impl FeatureService {
     ) -> AppResult<(Feature, i64)> {
         let storage_srid = self.get_storage_srid(collection).await?;
 
-        let mut tx = self.db.pool().begin().await?;
+        // Execute as the user to enforce PostgreSQL permissions
+        let mut tx = self.db.begin_as(username).await?;
 
         let quoted_schema = quote_ident(&collection.schema_name);
         let quoted_table = quote_ident(&collection.table_name);
@@ -1146,11 +1163,11 @@ impl FeatureService {
         feature_id: Uuid,
         expected_version: Option<i64>,
     ) -> AppResult<()> {
-        let collection = self.get_collection(collection_id).await?;
+        let collection = self.get_collection(username, collection_id).await?;
 
         match collection.collection_type.as_str() {
             "vector" => {
-                self.delete_vector_feature(&collection, feature_id, expected_version)
+                self.delete_vector_feature(username, &collection, feature_id, expected_version)
                     .await
             }
             "raster" | "pointcloud" => {
@@ -1166,11 +1183,16 @@ impl FeatureService {
 
     async fn delete_vector_feature(
         &self,
+        username: &str,
         collection: &Collection,
         feature_id: Uuid,
         expected_version: Option<i64>,
     ) -> AppResult<()> {
-        let mut tx = self.db.pool().begin().await?;
+        // Check write permission first (before version check for proper error ordering)
+        self.check_write_permission(username, collection).await?;
+
+        // Execute as the user to enforce PostgreSQL permissions
+        let mut tx = self.db.begin_as(username).await?;
 
         let quoted_schema = quote_ident(&collection.schema_name);
         let quoted_table = quote_ident(&collection.table_name);
@@ -1265,20 +1287,24 @@ impl FeatureService {
     /// Create a STAC item (for raster/pointcloud collections)
     pub async fn create_item(
         &self,
-        _username: &str,
+        username: &str,
         collection_id: &str,
         geometry: &serde_json::Value,
         properties: &serde_json::Value,
         datetime: Option<chrono::DateTime<chrono::Utc>>,
         assets: Option<&serde_json::Value>,
     ) -> AppResult<(Feature, i64)> {
-        let collection = self.get_collection(collection_id).await?;
+        let collection = self.get_collection(username, collection_id).await?;
 
         if collection.collection_type == "vector" {
             return Err(AppError::BadRequest(
                 "Item creation with assets requires raster/pointcloud collection. Use feature creation for vector collections.".to_string(),
             ));
         }
+
+        // Check write permission for raster/pointcloud collections
+        // (can't use SET LOCAL ROLE since items are in a central table)
+        self.check_write_permission(username, &collection).await?;
 
         let item_id = Uuid::new_v4();
 
@@ -1391,7 +1417,7 @@ impl FeatureService {
     /// Update a STAC item (PATCH - JSON Merge Patch)
     pub async fn update_item(
         &self,
-        _username: &str,
+        username: &str,
         collection_id: &str,
         item_id: Uuid,
         expected_version: Option<i64>,
@@ -1400,7 +1426,10 @@ impl FeatureService {
         datetime: Option<chrono::DateTime<chrono::Utc>>,
         assets: Option<&serde_json::Value>,
     ) -> AppResult<(Feature, i64)> {
-        let collection = self.get_collection(collection_id).await?;
+        let collection = self.get_collection(username, collection_id).await?;
+
+        // Check write permission for raster/pointcloud collections
+        self.check_write_permission(username, &collection).await?;
 
         let mut tx = self.db.pool().begin().await?;
 
@@ -1574,7 +1603,7 @@ impl FeatureService {
     /// Replace a STAC item (PUT)
     pub async fn replace_item(
         &self,
-        _username: &str,
+        username: &str,
         collection_id: &str,
         item_id: Uuid,
         expected_version: Option<i64>,
@@ -1583,7 +1612,10 @@ impl FeatureService {
         datetime: Option<chrono::DateTime<chrono::Utc>>,
         assets: Option<&serde_json::Value>,
     ) -> AppResult<(Feature, i64)> {
-        let collection = self.get_collection(collection_id).await?;
+        let collection = self.get_collection(username, collection_id).await?;
+
+        // Check write permission for raster/pointcloud collections
+        self.check_write_permission(username, &collection).await?;
 
         let mut tx = self.db.pool().begin().await?;
 
@@ -1719,12 +1751,15 @@ impl FeatureService {
     /// Delete a STAC item
     pub async fn delete_item(
         &self,
-        _username: &str,
+        username: &str,
         collection_id: &str,
         item_id: Uuid,
         expected_version: Option<i64>,
     ) -> AppResult<()> {
-        let collection = self.get_collection(collection_id).await?;
+        let collection = self.get_collection(username, collection_id).await?;
+
+        // Check write permission for raster/pointcloud collections
+        self.check_write_permission(username, &collection).await?;
 
         let mut tx = self.db.pool().begin().await?;
 
@@ -1761,12 +1796,67 @@ impl FeatureService {
         Ok(())
     }
 
-    async fn get_collection(&self, collection_id: &str) -> AppResult<Collection> {
-        sqlx::query_as("SELECT * FROM spatialvault.collections WHERE canonical_name = $1")
-            .bind(collection_id)
-            .fetch_optional(self.db.pool())
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))
+    /// Get collection with authorization check - user must be owner or have SELECT privilege
+    async fn get_collection(&self, username: &str, collection_id: &str) -> AppResult<Collection> {
+        sqlx::query_as(
+            r#"
+            SELECT c.*
+            FROM spatialvault.collections c
+            WHERE c.canonical_name = $1
+              AND (
+                  c.owner = $2
+                  OR EXISTS (
+                      SELECT 1 FROM information_schema.table_privileges tp
+                      WHERE tp.table_schema = c.schema_name
+                        AND tp.table_name = c.table_name
+                        AND tp.grantee = $2
+                        AND tp.privilege_type = 'SELECT'
+                  )
+              )
+            "#,
+        )
+        .bind(collection_id)
+        .bind(username)
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))
+    }
+
+    /// Check if the user has write permission on a collection
+    /// Returns Ok(()) if user has write permission, Err(Forbidden) otherwise
+    async fn check_write_permission(
+        &self,
+        username: &str,
+        collection: &Collection,
+    ) -> AppResult<()> {
+        // Owner always has write permission
+        if collection.owner == username {
+            return Ok(());
+        }
+
+        // Check for INSERT privilege (implies write access)
+        let has_write: (bool,) = sqlx::query_as(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.table_privileges tp
+                WHERE tp.table_schema = $1
+                  AND tp.table_name = $2
+                  AND tp.grantee = $3
+                  AND tp.privilege_type = 'INSERT'
+            )
+            "#,
+        )
+        .bind(&collection.schema_name)
+        .bind(&collection.table_name)
+        .bind(username)
+        .fetch_one(self.db.pool())
+        .await?;
+
+        if has_write.0 {
+            Ok(())
+        } else {
+            Err(AppError::Forbidden("Write permission required".to_string()))
+        }
     }
 
     async fn get_storage_srid(&self, collection: &Collection) -> AppResult<i32> {

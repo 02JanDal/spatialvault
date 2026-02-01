@@ -80,6 +80,19 @@ impl IntoResponse for AppError {
                 )
             }
             AppError::Database(e) => {
+                // Check for PostgreSQL permission errors (42501 = insufficient_privilege)
+                if let sqlx::Error::Database(db_err) = &e {
+                    if db_err.code().as_deref() == Some("42501") {
+                        return (
+                            StatusCode::FORBIDDEN,
+                            Json(ErrorResponse {
+                                code: "Forbidden".to_string(),
+                                description: "Permission denied".to_string(),
+                            }),
+                        )
+                            .into_response();
+                    }
+                }
                 tracing::error!("Database error: {}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,

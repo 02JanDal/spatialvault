@@ -235,7 +235,6 @@ mod tests {
             database: crate::config::DatabaseConfig {
                 url: "postgres://localhost/test".to_string(),
                 max_connections: 5,
-                service_role: "test".to_string(),
             },
             oidc: crate::config::OidcConfig {
                 issuer_url: "http://localhost".to_string(),

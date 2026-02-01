@@ -47,8 +47,6 @@ pub struct DatabaseConfig {
     pub url: String,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
-    #[serde(default = "default_service_role")]
-    pub service_role: String,
 }
 
 // Custom Debug implementation to redact database URL (may contain password)
@@ -57,7 +55,6 @@ impl fmt::Debug for DatabaseConfig {
         f.debug_struct("DatabaseConfig")
             .field("url", &"[REDACTED]")
             .field("max_connections", &self.max_connections)
-            .field("service_role", &self.service_role)
             .finish()
     }
 }

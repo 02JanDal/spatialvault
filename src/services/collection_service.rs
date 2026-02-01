@@ -204,6 +204,14 @@ impl CollectionService {
                 quoted_schema, quoted_table
             );
             sqlx::query(&create_index_sql).execute(&mut *tx).await?;
+
+            // Set table ownership to the owner role
+            let quoted_owner = quote_ident(owner);
+            let alter_owner_sql = format!(
+                "ALTER TABLE {}.{} OWNER TO {}",
+                quoted_schema, quoted_table, quoted_owner
+            );
+            sqlx::query(&alter_owner_sql).execute(&mut *tx).await?;
         }
 
         tx.commit().await?;
@@ -220,6 +228,12 @@ impl CollectionService {
         description: Option<&str>,
         new_name: Option<&str>,
     ) -> AppResult<Collection> {
+        // First check if user can see the collection (visibility check)
+        // This returns 404 for non-visible collections
+        let _ = self.get_collection(username, collection_id).await?.ok_or_else(|| {
+            AppError::NotFound(format!("Collection not found: {}", collection_id))
+        })?;
+
         let mut tx = self.db.pool().begin().await?;
 
         // Get current collection with version check
@@ -231,6 +245,13 @@ impl CollectionService {
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
 
+        // Check ownership (only owner can update)
+        if current.owner != username {
+            return Err(AppError::Forbidden(
+                "Only owner can update collection".to_string(),
+            ));
+        }
+
         // Check version if If-Match header was provided
         if let Some(version) = expected_version {
             if current.version != version {
@@ -238,13 +259,6 @@ impl CollectionService {
                     "Collection has been modified".to_string(),
                 ));
             }
-        }
-
-        // Check ownership
-        if current.owner != username {
-            return Err(AppError::Forbidden(
-                "Only owner can update collection".to_string(),
-            ));
         }
 
         // Handle rename
@@ -298,6 +312,12 @@ impl CollectionService {
         title: &str,
         description: Option<&str>,
     ) -> AppResult<Collection> {
+        // First check if user can see the collection (visibility check)
+        // This returns 404 for non-visible collections
+        let _ = self.get_collection(username, collection_id).await?.ok_or_else(|| {
+            AppError::NotFound(format!("Collection not found: {}", collection_id))
+        })?;
+        
         let mut tx = self.db.pool().begin().await?;
 
         // Get current collection with version check
@@ -309,6 +329,13 @@ impl CollectionService {
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
 
+        // Check ownership first (before version check for proper error ordering)
+        if current.owner != username {
+            return Err(AppError::Forbidden(
+                "Only owner can update collection".to_string(),
+            ));
+        }
+
         // Check version if If-Match header was provided
         if let Some(version) = expected_version {
             if current.version != version {
@@ -316,13 +343,6 @@ impl CollectionService {
                     "Collection has been modified".to_string(),
                 ));
             }
-        }
-
-        // Check ownership
-        if current.owner != username {
-            return Err(AppError::Forbidden(
-                "Only owner can update collection".to_string(),
-            ));
         }
 
         // Replace collection (title and description are the only mutable fields)
@@ -355,6 +375,12 @@ impl CollectionService {
         collection_id: &str,
         expected_version: Option<i64>,
     ) -> AppResult<()> {
+        // First check if user can see the collection (visibility check)
+        // This returns 404 for non-visible collections
+        let _ = self.get_collection(username, collection_id).await?.ok_or_else(|| {
+            AppError::NotFound(format!("Collection not found: {}", collection_id))
+        })?;
+
         let mut tx = self.db.pool().begin().await?;
 
         let collection: Collection = sqlx::query_as(
@@ -365,6 +391,13 @@ impl CollectionService {
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
 
+        // Check ownership (only owner can delete)
+        if collection.owner != username {
+            return Err(AppError::Forbidden(
+                "Only owner can delete collection".to_string(),
+            ));
+        }
+
         // Check version if If-Match header was provided
         if let Some(version) = expected_version {
             if collection.version != version {
@@ -372,12 +405,6 @@ impl CollectionService {
                     "Collection has been modified".to_string(),
                 ));
             }
-        }
-
-        if collection.owner != username {
-            return Err(AppError::Forbidden(
-                "Only owner can delete collection".to_string(),
-            ));
         }
 
         // Drop the table for vector collections
