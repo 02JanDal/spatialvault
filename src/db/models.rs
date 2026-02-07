@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
+// TODO: should these really be Serialize and Deserialize
+
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Collection {
     pub id: Uuid,
@@ -14,8 +16,8 @@ pub struct Collection {
     pub title: String,
     pub description: Option<String>,
     pub version: i64,
-    pub created_at: Option<DateTime<Utc>>,
-    pub updated_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// Collection with storage CRS included (used when fetching with metadata)
@@ -30,8 +32,8 @@ pub struct CollectionWithCrs {
     pub title: String,
     pub description: Option<String>,
     pub version: i64,
-    pub created_at: Option<DateTime<Utc>>,
-    pub updated_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
     pub storage_crs: i32,
 }
 

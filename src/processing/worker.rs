@@ -403,19 +403,23 @@ impl JobWorker {
         collection_type: &str,
     ) -> AppResult<Collection> {
         // Try to get existing collection
-        if let Some(collection) = self
+        match self
             .collection_service
             .get_collection(owner, collection_name)
-            .await?
+            .await
         {
-            // Verify type matches
-            if collection.collection_type != collection_type {
-                return Err(AppError::BadRequest(format!(
-                    "Collection '{}' exists but is type '{}', expected '{}'",
-                    collection_name, collection.collection_type, collection_type
-                )));
+            Ok(collection) => {
+                // Verify type matches
+                if collection.collection_type != collection_type {
+                    return Err(AppError::BadRequest(format!(
+                        "Collection '{}' exists but is type '{}', expected '{}'",
+                        collection_name, collection.collection_type, collection_type
+                    )));
+                }
+                return Ok(collection.as_collection());
             }
-            return Ok(collection.as_collection());
+            Err(AppError::NotFound(_)) => {}
+            Err(e) => return Err(e),
         }
 
         // Create new collection

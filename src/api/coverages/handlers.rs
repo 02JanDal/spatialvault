@@ -1,24 +1,21 @@
+use crate::api::common::{Link, SpatialExtent, media_type, rel};
+use crate::auth::AuthenticatedUser;
+use crate::config::Config;
+use crate::error::AppError;
+use crate::services::{CollectionService, CoverageService};
 use aide::{
     axum::{ApiRouter, routing::get_with},
     transform::TransformOperation,
 };
 use axum::{
     Json,
-    body::Body,
-    extract::{Extension, Query, State},
-    http::{HeaderMap, StatusCode, header},
+    extract::{Extension, State},
     response::{IntoResponse, Response},
 };
+use axum_extra::routing::TypedPath;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::sync::Arc;
-
-use super::range_subset::CoverageSubsetParams;
-use crate::api::common::{Link, SpatialExtent, media_type, rel};
-use crate::auth::AuthenticatedUser;
-use crate::config::Config;
-use crate::error::{AppError, AppResult};
-use crate::services::{CollectionService, CoverageService};
 
 /// Coverage description (OGC API Coverages)
 #[derive(Debug, Serialize, JsonSchema)]
@@ -110,29 +107,13 @@ pub struct CoveragePath {
 pub async fn get_coverage(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State((service, collection_service)): State<(Arc<CoverageService>, Arc<CollectionService>)>,
+    State((_service, collection_service)): State<(Arc<CoverageService>, Arc<CollectionService>)>,
     path: CoveragePath,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service
-        .check_alias_redirect(&collection_id)
-        .await?
-    {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!("{}/collections/{}/coverage", config.base_url, new_name)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
-
-    let collection = service
+    let collection = collection_service
         .get_collection(&user.username, &collection_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+        .await?;
 
     // Verify this is a raster collection
     if collection.collection_type != "raster" {
@@ -206,32 +187,16 @@ pub struct CoverageDomainsetPath {
 
 /// Get domain set
 pub async fn get_domainset(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State((service, collection_service)): State<(Arc<CoverageService>, Arc<CollectionService>)>,
     path: CoverageDomainsetPath,
 ) -> Result<Response, AppError> {
-    let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service
-        .check_alias_redirect(&collection_id)
-        .await?
-    {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!(
-                "{}/collections/{}/coverage/domainset",
-                config.base_url, new_name
-            )
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
+    let collection = collection_service
+        .get_collection(&user.username, &path.collection_id)
+        .await?;
 
     let domain = service
-        .get_domainset(&user.username, &collection_id)
+        .get_domainset(&user.username, &collection.as_collection())
         .await?;
 
     Ok(Json(domain).into_response())
@@ -254,32 +219,16 @@ pub struct CoverageRangetypePath {
 
 /// Get range type
 pub async fn get_rangetype(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State((service, collection_service)): State<(Arc<CoverageService>, Arc<CollectionService>)>,
     path: CoverageRangetypePath,
 ) -> Result<Response, AppError> {
-    let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service
-        .check_alias_redirect(&collection_id)
-        .await?
-    {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!(
-                "{}/collections/{}/coverage/rangetype",
-                config.base_url, new_name
-            )
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
+    let collection = collection_service
+        .get_collection(&user.username, &path.collection_id)
+        .await?;
 
     let rangetype = service
-        .get_rangetype(&user.username, &collection_id)
+        .get_rangetype(&user.username, &collection.as_collection())
         .await?;
 
     Ok(Json(rangetype).into_response())
@@ -292,54 +241,21 @@ fn get_rangetype_docs(op: TransformOperation) -> TransformOperation {
         .response_with::<200, Json<RangeType>, _>(|res| res.description("Range type description"))
 }
 
-/// Get coverage data with optional subsetting
-pub async fn get_coverage_data(
-    Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<CoverageService>>,
-    path: CoveragePath,
-    Query(params): Query<CoverageSubsetParams>,
-) -> AppResult<Response> {
-    let collection_id = path.collection_id;
-    let data = service
-        .get_coverage_data(&user.username, &collection_id, &params)
-        .await?;
-
-    let content_type = match params.output_format() {
-        "image/tiff" | "image/geotiff" => "image/tiff",
-        "image/png" => "image/png",
-        _ => "image/tiff",
-    };
-
-    let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
-
-    Ok((StatusCode::OK, headers, Body::from(data)).into_response())
-}
-
-fn get_coverage_data_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Get coverage data")
-        .description("Returns the actual coverage data with optional spatial subsetting")
-        .tag("Coverages")
-        .response_with::<200, (), _>(|res| {
-            res.description("Coverage data (image/tiff or image/png)")
-        })
-}
-
 pub fn routes(
     service: Arc<CoverageService>,
     collection_service: Arc<CollectionService>,
 ) -> ApiRouter {
     ApiRouter::new()
         .api_route(
-            "/collections/{collection_id}/coverage",
+            CoveragePath::PATH,
             get_with(get_coverage, get_coverage_docs),
         )
         .api_route(
-            "/collections/{collection_id}/coverage/domainset",
+            CoverageDomainsetPath::PATH,
             get_with(get_domainset, get_domainset_docs),
         )
         .api_route(
-            "/collections/{collection_id}/coverage/rangetype",
+            CoverageRangetypePath::PATH,
             get_with(get_rangetype, get_rangetype_docs),
         )
         .with_state((service, collection_service))

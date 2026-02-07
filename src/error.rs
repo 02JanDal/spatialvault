@@ -5,6 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use axum::http::{header, HeaderMap};
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -50,6 +51,9 @@ pub enum AppError {
 
     #[error("Processing error: {0}")]
     Processing(String),
+
+    #[error("Collection named")]
+    RenamedTo(String),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -139,6 +143,15 @@ impl IntoResponse for AppError {
                     "ProcessingError",
                     "A processing error occurred".to_string(),
                 )
+            }
+            AppError::RenamedTo(id) => {
+                let mut headers = HeaderMap::new();
+                // TODO: handle mounting at non-root subpath
+                headers.insert(
+                    header::LOCATION,
+                    format!("/collections/{}", id).parse().unwrap(),
+                );
+                return (StatusCode::TEMPORARY_REDIRECT, headers).into_response();
             }
         };
 

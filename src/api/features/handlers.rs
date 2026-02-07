@@ -1,28 +1,29 @@
+use super::crs::{ContentCrs, parse_crs_param};
+use super::query::FeatureQueryParams;
+use crate::api::common::Location;
+use crate::api::common::{Link, etag, media_type, rel};
+use crate::auth::AuthenticatedUser;
+use crate::config::Config;
+use crate::error::AppError;
+use crate::services::FeatureService;
 use aide::{
-    axum::{
-        ApiRouter,
-        routing::{delete_with, get_with, patch_with, post_with, put_with},
-    },
+    axum::{ApiRouter, routing::get_with},
     transform::TransformOperation,
 };
 use axum::{
     Json,
     extract::{Extension, Query, State},
-    http::{HeaderMap, StatusCode, header},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
+use axum_extra::TypedHeader;
+use axum_extra::headers::{ContentType, IfMatch};
+use axum_extra::routing::TypedPath;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
-
-use super::crs::{content_crs_header, parse_crs_param};
-use super::query::FeatureQueryParams;
-use crate::api::common::{Link, etag, media_type, rel};
-use crate::auth::AuthenticatedUser;
-use crate::config::Config;
-use crate::error::{AppError, AppResult};
-use crate::services::{CollectionService, FeatureService};
 
 /// GeoJSON Feature (also serves as STAC Item for raster/pointcloud collections)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -34,7 +35,7 @@ pub struct Feature {
     pub properties: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub links: Option<Vec<Link>>,
-    /// STAC fields (for raster/pointcloud items)
+    /// STAC fields
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bbox: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -57,8 +58,8 @@ pub struct FeatureCollection {
     pub links: Option<Vec<Link>>,
     #[serde(rename = "numberMatched", skip_serializing_if = "Option::is_none")]
     pub number_matched: Option<u64>,
-    #[serde(rename = "numberReturned", skip_serializing_if = "Option::is_none")]
-    pub number_returned: Option<u64>,
+    #[serde(rename = "numberReturned")]
+    pub number_returned: u64,
     #[serde(rename = "timeStamp", skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
 }
@@ -70,7 +71,7 @@ pub struct CreateFeatureRequest {
     pub feature_type: Option<String>,
     pub geometry: serde_json::Value,
     pub properties: serde_json::Value,
-    /// STAC item assets (for raster/pointcloud collections)
+    /// STAC item assets
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assets: Option<serde_json::Value>,
 }
@@ -80,7 +81,7 @@ pub struct CreateFeatureRequest {
 pub struct UpdateFeatureRequest {
     pub geometry: Option<serde_json::Value>,
     pub properties: Option<serde_json::Value>,
-    /// STAC item assets (for raster/pointcloud collections)
+    /// STAC item assets
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assets: Option<serde_json::Value>,
 }
@@ -96,25 +97,11 @@ pub struct CollectionItemsPath {
 pub async fn list_features(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
+    State(service): State<Arc<FeatureService>>,
     path: CollectionItemsPath,
     Query(params): Query<FeatureQueryParams>,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service
-        .check_alias_redirect(&collection_id)
-        .await?
-    {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!("{}/collections/{}/items", config.base_url, new_name)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
 
     params.validate()?;
 
@@ -186,20 +173,18 @@ pub async fn list_features(
     let collection = FeatureCollection {
         feature_type: "FeatureCollection".to_string(),
         number_matched: Some(total_count as u64),
-        number_returned: Some(features.len() as u64),
+        number_returned: features.len() as u64,
         features,
         links: Some(links),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),
     };
 
-    let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, media_type::GEOJSON.parse().unwrap());
-    headers.insert(
-        "Content-Crs",
-        content_crs_header(response_crs).parse().unwrap(),
-    );
-
-    Ok((headers, Json(collection)).into_response())
+    Ok((
+        TypedHeader(ContentType::from_str(media_type::GEOJSON).unwrap()),
+        TypedHeader(ContentCrs(response_crs)),
+        Json(collection),
+    )
+        .into_response())
 }
 
 fn list_features_docs(op: TransformOperation) -> TransformOperation {
@@ -224,29 +209,11 @@ pub struct FeaturePath {
 pub async fn get_feature(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
+    State(service): State<Arc<FeatureService>>,
     path: FeaturePath,
     Query(params): Query<FeatureQueryParams>,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service
-        .check_alias_redirect(&collection_id)
-        .await?
-    {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!(
-                "{}/collections/{}/items/{}",
-                config.base_url, new_name, path.feature_id
-            )
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
-
     let feature_id = path.feature_id;
     let target_crs = parse_crs_param(params.crs.as_deref())?;
 
@@ -280,15 +247,13 @@ pub async fn get_feature(
         .with_type(media_type::JSON),
     ]);
 
-    let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, media_type::GEOJSON.parse().unwrap());
-    headers.insert(
-        "Content-Crs",
-        content_crs_header(response_crs).parse().unwrap(),
-    );
-    headers.insert(header::ETAG, format!("\"{}\"", version).parse().unwrap());
-
-    Ok((headers, Json(feature)).into_response())
+    Ok((
+        TypedHeader(ContentType::from_str(media_type::GEOJSON).unwrap()),
+        TypedHeader(ContentCrs(response_crs)),
+        TypedHeader(etag::make(version)),
+        Json(feature),
+    )
+        .into_response())
 }
 
 fn get_feature_docs(op: TransformOperation) -> TransformOperation {
@@ -302,25 +267,11 @@ fn get_feature_docs(op: TransformOperation) -> TransformOperation {
 pub async fn create_feature(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
+    State(service): State<Arc<FeatureService>>,
     path: CollectionItemsPath,
     Json(request): Json<CreateFeatureRequest>,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service
-        .check_alias_redirect(&collection_id)
-        .await?
-    {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!("{}/collections/{}/items", config.base_url, new_name)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
 
     // Extract datetime from properties if present
     let datetime = request
@@ -330,64 +281,30 @@ pub async fn create_feature(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
-    // Try to create as STAC item first (for raster/pointcloud), fall back to vector feature
-    let (feature, version) = if request.assets.is_some() {
-        // Has assets, must be a STAC item
-        service
-            .create_item(
-                &user.username,
-                &collection_id,
-                &request.geometry,
-                &request.properties,
-                datetime,
-                request.assets.as_ref(),
-            )
-            .await?
-    } else {
-        // Try as vector feature first
-        match service
-            .create_feature(
-                &user.username,
-                &collection_id,
-                &request.geometry,
-                &request.properties,
-            )
-            .await
-        {
-            Ok(result) => result,
-            Err(AppError::BadRequest(msg)) if msg.contains("vector") => {
-                // Collection is not vector, try as STAC item without assets
-                service
-                    .create_item(
-                        &user.username,
-                        &collection_id,
-                        &request.geometry,
-                        &request.properties,
-                        datetime,
-                        None,
-                    )
-                    .await?
-            }
-            Err(e) => return Err(e),
-        }
-    };
+    let (feature, version) = service
+        .create_feature(
+            &user.username,
+            &collection_id,
+            &request.geometry,
+            &request.properties,
+            datetime,
+            request.assets,
+        )
+        .await?;
 
     let base_url = &config.base_url;
 
-    let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, media_type::GEOJSON.parse().unwrap());
-    headers.insert(
-        header::LOCATION,
-        format!(
+    Ok((
+        StatusCode::CREATED,
+        TypedHeader(ContentType::from_str(media_type::GEOJSON).unwrap()),
+        TypedHeader(Location(format!(
             "{}/collections/{}/items/{}",
             base_url, collection_id, feature.id
-        )
-        .parse()
-        .unwrap(),
-    );
-    headers.insert(header::ETAG, format!("\"{}\"", version).parse().unwrap());
-
-    Ok((StatusCode::CREATED, headers, Json(feature)).into_response())
+        ))),
+        TypedHeader(etag::make(version)),
+        Json(feature),
+    )
+        .into_response())
 }
 
 fn create_feature_docs(op: TransformOperation) -> TransformOperation {
@@ -403,35 +320,15 @@ fn create_feature_docs(op: TransformOperation) -> TransformOperation {
 }
 
 pub async fn update_feature(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
+    State(service): State<Arc<FeatureService>>,
     path: FeaturePath,
-    headers: HeaderMap,
+    if_match: Option<TypedHeader<IfMatch>>,
     Json(request): Json<UpdateFeatureRequest>,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service
-        .check_alias_redirect(&collection_id)
-        .await?
-    {
-        let mut redirect_headers = HeaderMap::new();
-        redirect_headers.insert(
-            header::LOCATION,
-            format!(
-                "{}/collections/{}/items/{}",
-                config.base_url, new_name, path.feature_id
-            )
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, redirect_headers).into_response());
-    }
 
     let feature_id = path.feature_id;
-    // If-Match header is optional - when present, enables optimistic locking
-    let expected_version = etag::extract_expected_version(&headers)?;
 
     // Extract datetime from properties if present
     let datetime = request
@@ -442,56 +339,20 @@ pub async fn update_feature(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
-    // Try vector update first, fall back to item update
-    let (feature, new_version) = match service
+    let (feature, new_version) = service
         .update_feature(
             &user.username,
             &collection_id,
             feature_id,
-            expected_version,
-            request.geometry.as_ref(),
-            request.properties.as_ref(),
+            |version| etag::matches(version, if_match),
+            request.geometry,
+            request.properties,
+            datetime,
+            request.assets,
         )
-        .await
-    {
-        Ok(result) => result,
-        Err(AppError::NotFound(_)) if request.assets.is_some() || datetime.is_some() => {
-            // May be a STAC item, try that
-            service
-                .update_item(
-                    &user.username,
-                    &collection_id,
-                    feature_id,
-                    expected_version,
-                    request.geometry.as_ref(),
-                    request.properties.as_ref(),
-                    datetime,
-                    request.assets.as_ref(),
-                )
-                .await?
-        }
-        Err(AppError::BadRequest(msg)) if msg.contains("vector") => {
-            // Collection is not vector, try as STAC item
-            service
-                .update_item(
-                    &user.username,
-                    &collection_id,
-                    feature_id,
-                    expected_version,
-                    request.geometry.as_ref(),
-                    request.properties.as_ref(),
-                    datetime,
-                    request.assets.as_ref(),
-                )
-                .await?
-        }
-        Err(e) => return Err(e),
-    };
+        .await?;
 
-    let mut response_headers = HeaderMap::new();
-    response_headers.insert(header::ETAG, etag::create_etag_header(new_version)?);
-
-    Ok((response_headers, Json(feature)).into_response())
+    Ok((TypedHeader(etag::make(new_version)), Json(feature)).into_response())
 }
 
 fn update_feature_docs(op: TransformOperation) -> TransformOperation {
@@ -506,35 +367,14 @@ fn update_feature_docs(op: TransformOperation) -> TransformOperation {
 }
 
 pub async fn replace_feature(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
+    State(service): State<Arc<FeatureService>>,
     path: FeaturePath,
-    headers: HeaderMap,
+    if_match: Option<TypedHeader<IfMatch>>,
     Json(request): Json<CreateFeatureRequest>,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service
-        .check_alias_redirect(&collection_id)
-        .await?
-    {
-        let mut redirect_headers = HeaderMap::new();
-        redirect_headers.insert(
-            header::LOCATION,
-            format!(
-                "{}/collections/{}/items/{}",
-                config.base_url, new_name, path.feature_id
-            )
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, redirect_headers).into_response());
-    }
-
     let feature_id = path.feature_id;
-    // If-Match header is optional - when present, enables optimistic locking
-    let expected_version = etag::extract_expected_version(&headers)?;
 
     // Extract datetime from properties if present
     let datetime = request
@@ -544,57 +384,20 @@ pub async fn replace_feature(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&chrono::Utc));
 
-    // Try vector replace first, fall back to item replace
-    let (feature, new_version) = if request.assets.is_some() {
-        // Has assets, must be a STAC item
-        service
-            .replace_item(
-                &user.username,
-                &collection_id,
-                feature_id,
-                expected_version,
-                &request.geometry,
-                &request.properties,
-                datetime,
-                request.assets.as_ref(),
-            )
-            .await?
-    } else {
-        match service
-            .replace_feature(
-                &user.username,
-                &collection_id,
-                feature_id,
-                expected_version,
-                &request.geometry,
-                &request.properties,
-            )
-            .await
-        {
-            Ok(result) => result,
-            Err(AppError::NotFound(_)) => {
-                // May be a STAC item
-                service
-                    .replace_item(
-                        &user.username,
-                        &collection_id,
-                        feature_id,
-                        expected_version,
-                        &request.geometry,
-                        &request.properties,
-                        datetime,
-                        None,
-                    )
-                    .await?
-            }
-            Err(e) => return Err(e),
-        }
-    };
+    let (feature, new_version) = service
+        .replace_feature(
+            &user.username,
+            &collection_id,
+            feature_id,
+            |version| etag::matches(version, if_match),
+            request.geometry,
+            request.properties,
+            datetime,
+            request.assets,
+        )
+        .await?;
 
-    let mut response_headers = HeaderMap::new();
-    response_headers.insert(header::ETAG, etag::create_etag_header(new_version)?);
-
-    Ok((response_headers, Json(feature)).into_response())
+    Ok((TypedHeader(etag::make(new_version)), Json(feature)).into_response())
 }
 
 fn replace_feature_docs(op: TransformOperation) -> TransformOperation {
@@ -609,49 +412,19 @@ fn replace_feature_docs(op: TransformOperation) -> TransformOperation {
 }
 
 pub async fn delete_feature(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State((service, collection_service)): State<(Arc<FeatureService>, Arc<CollectionService>)>,
+    State(service): State<Arc<FeatureService>>,
     path: FeaturePath,
-    headers: HeaderMap,
+    if_match: Option<TypedHeader<IfMatch>>,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service
-        .check_alias_redirect(&collection_id)
-        .await?
-    {
-        let mut redirect_headers = HeaderMap::new();
-        redirect_headers.insert(
-            header::LOCATION,
-            format!(
-                "{}/collections/{}/items/{}",
-                config.base_url, new_name, path.feature_id
-            )
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, redirect_headers).into_response());
-    }
-
     let feature_id = path.feature_id;
-    // If-Match header is optional - when present, enables optimistic locking
-    let expected_version = etag::extract_expected_version(&headers)?;
 
-    // Try vector delete first, fall back to item delete
-    match service
-        .delete_feature(&user.username, &collection_id, feature_id, expected_version)
-        .await
-    {
-        Ok(()) => {}
-        Err(AppError::NotFound(_)) => {
-            // May be a STAC item
-            service
-                .delete_item(&user.username, &collection_id, feature_id, expected_version)
-                .await?;
-        }
-        Err(e) => return Err(e),
-    }
+    service
+        .delete_feature(&user.username, &collection_id, feature_id, |version| {
+            etag::matches(version, if_match)
+        })
+        .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -665,22 +438,19 @@ fn delete_feature_docs(op: TransformOperation) -> TransformOperation {
         .response_with::<412, (), _>(|res| res.description("Precondition failed (ETag mismatch)"))
 }
 
-pub fn routes(
-    service: Arc<FeatureService>,
-    collection_service: Arc<CollectionService>,
-) -> ApiRouter {
+pub fn routes(service: Arc<FeatureService>) -> ApiRouter {
     ApiRouter::new()
         .api_route(
-            "/collections/{collection_id}/items",
+            CollectionItemsPath::PATH,
             get_with(list_features, list_features_docs)
                 .post_with(create_feature, create_feature_docs),
         )
         .api_route(
-            "/collections/{collection_id}/items/{feature_id}",
+            FeaturePath::PATH,
             get_with(get_feature, get_feature_docs)
                 .put_with(replace_feature, replace_feature_docs)
                 .patch_with(update_feature, update_feature_docs)
                 .delete_with(delete_feature, delete_feature_docs),
         )
-        .with_state((service, collection_service))
+        .with_state(service)
 }

@@ -6,7 +6,6 @@ license = "MPL-2.0"
 
 [features]
 default = []
-gdal-support = ["dep:gdal"]
 
 [dependencies]
 # Web framework
@@ -17,7 +16,7 @@ tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"]
 tokio = { version = "1", features = ["full"] }
 
 # OpenAPI generation
-aide = { version = "0.15", features = ["axum", "axum-extra", "axum-json", "axum-query", "axum-extra-typed-routing", "redoc", "scalar", "macros"] }
+aide = { version = "0.15", features = ["axum", "axum-extra", "axum-json", "axum-query", "axum-extra-headers", "axum-extra-typed-routing", "redoc", "scalar", "macros"] }
 aide-macros = "0.15"
 schemars = { version = "0.9", features = ["uuid1"] }
 
@@ -41,8 +40,8 @@ cql2 = "0.4"
 # Object storage
 object_store = { version = "0.11", features = ["aws"] }
 
-# GDAL bindings (for COG/COPC conversion) - optional, enable with `gdal-support` feature
-gdal = { version = "0.17", optional = true, features = ["bindgen"] }
+# GDAL bindings (for COG/COPC conversion)
+gdal = { version = "0.17", features = ["bindgen"] }
 
 # Image encoding for raster tiles (PNG, JPEG, WebP)
 png = "0.17"

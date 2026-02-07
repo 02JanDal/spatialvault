@@ -1,8 +1,7 @@
-use axum::http::{HeaderMap, HeaderValue, header};
+use axum::http::{HeaderName, HeaderValue, header};
+use axum_extra::headers::{Error, Header};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
-use crate::error::AppError;
 
 /// OGC API Link object
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -167,125 +166,41 @@ impl PaginationParams {
 
 /// ETag utilities for versioning and optimistic locking
 pub mod etag {
-    use super::*;
+    use axum_extra::TypedHeader;
+    use axum_extra::headers::{ETag, IfMatch};
 
-    /// Extract expected version from If-Match header (optional)
-    /// Returns None if header is not present, or the parsed version if it is
-    pub fn extract_expected_version(headers: &HeaderMap) -> Result<Option<i64>, AppError> {
-        headers
-            .get(header::IF_MATCH)
-            .and_then(|v| v.to_str().ok())
-            .map(|etag| {
-                etag.trim_matches('"')
-                    .parse()
-                    .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))
-            })
-            .transpose()
+    pub fn make(version: i64) -> ETag {
+        format!("\"{}\"", version).parse().unwrap()
     }
 
-    /// Extract expected version from If-Match header (required)
-    /// Returns an error if header is not present or invalid
-    pub fn extract_required_version(headers: &HeaderMap) -> Result<i64, AppError> {
-        let etag_str = headers
-            .get(header::IF_MATCH)
-            .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                AppError::PreconditionFailed("If-Match header is required for updates".to_string())
-            })?;
-
-        etag_str
-            .trim_matches('"')
-            .parse()
-            .map_err(|_| AppError::BadRequest("Invalid ETag format".to_string()))
-    }
-
-    /// Create an ETag header value from a version number
-    /// The version is formatted as a quoted string per HTTP ETag spec
-    pub fn create_etag_header(version: i64) -> Result<HeaderValue, AppError> {
-        format!("\"{}\"", version)
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid ETag format".to_string()))
+    // TODO: add a test for this
+    pub fn matches(version: i64, if_match: Option<TypedHeader<IfMatch>>) -> bool {
+        if_match.map_or(true, |if_match| {
+            if_match.precondition_passes(&make(version))
+        })
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::http::{HeaderMap, HeaderValue, header};
+#[derive(Clone, Debug, PartialEq)]
+pub struct Location(pub String);
 
-    #[test]
-    fn test_extract_expected_version_none() {
-        let headers = HeaderMap::new();
-        let result = etag::extract_expected_version(&headers).unwrap();
-        assert_eq!(result, None);
+impl Header for Location {
+    fn name() -> &'static HeaderName {
+        &header::LOCATION
     }
 
-    #[test]
-    fn test_extract_expected_version_valid() {
-        let mut headers = HeaderMap::new();
-        headers.insert(header::IF_MATCH, HeaderValue::from_static("\"42\""));
-        let result = etag::extract_expected_version(&headers).unwrap();
-        assert_eq!(result, Some(42));
+    fn decode<'i, I>(values: &mut I) -> Result<Self, Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i HeaderValue>,
+    {
+        let value = values.next().ok_or_else(Error::invalid)?;
+        value
+            .to_str()
+            .map_or(Err(Error::invalid()), |s| Ok(Location(s.to_string())))
     }
 
-    #[test]
-    fn test_extract_expected_version_invalid_format() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::IF_MATCH,
-            HeaderValue::from_static("\"not-a-number\""),
-        );
-        let result = etag::extract_expected_version(&headers);
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::BadRequest(_)));
-    }
-
-    #[test]
-    fn test_extract_required_version_valid() {
-        let mut headers = HeaderMap::new();
-        headers.insert(header::IF_MATCH, HeaderValue::from_static("\"123\""));
-        let result = etag::extract_required_version(&headers).unwrap();
-        assert_eq!(result, 123);
-    }
-
-    #[test]
-    fn test_extract_required_version_missing() {
-        let headers = HeaderMap::new();
-        let result = etag::extract_required_version(&headers);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            AppError::PreconditionFailed(_)
-        ));
-    }
-
-    #[test]
-    fn test_extract_required_version_invalid_format() {
-        let mut headers = HeaderMap::new();
-        headers.insert(header::IF_MATCH, HeaderValue::from_static("\"invalid\""));
-        let result = etag::extract_required_version(&headers);
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AppError::BadRequest(_)));
-    }
-
-    #[test]
-    fn test_create_etag_header() {
-        let result = etag::create_etag_header(42).unwrap();
-        assert_eq!(result.to_str().unwrap(), "\"42\"");
-    }
-
-    #[test]
-    fn test_create_etag_header_large_number() {
-        let result = etag::create_etag_header(9223372036854775807).unwrap();
-        assert_eq!(result.to_str().unwrap(), "\"9223372036854775807\"");
-    }
-
-    #[test]
-    fn test_extract_expected_version_without_quotes() {
-        let mut headers = HeaderMap::new();
-        // Even without quotes, it should work (trim_matches handles this)
-        headers.insert(header::IF_MATCH, HeaderValue::from_static("42"));
-        let result = etag::extract_expected_version(&headers).unwrap();
-        assert_eq!(result, Some(42));
+    fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
+        values.extend(std::iter::once(HeaderValue::from_str(&self.0).unwrap()))
     }
 }

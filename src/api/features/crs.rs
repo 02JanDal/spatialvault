@@ -1,5 +1,7 @@
 use crate::api::common::crs::{srid_to_uri, uri_to_srid};
 use crate::error::{AppError, AppResult};
+use axum::http::{HeaderName, HeaderValue};
+use axum_extra::headers::{Error, Header};
 
 /// Parse CRS parameter and return SRID
 pub fn parse_crs_param(crs: Option<&str>) -> AppResult<Option<i32>> {
@@ -13,9 +15,30 @@ pub fn parse_crs_param(crs: Option<&str>) -> AppResult<Option<i32>> {
     }
 }
 
-/// Generate Content-Crs header value
-pub fn content_crs_header(srid: i32) -> String {
-    format!("<{}>", srid_to_uri(srid))
+pub struct ContentCrs(pub i32);
+static CONTENTCRS: HeaderName = HeaderName::from_static("content-crs");
+impl Header for ContentCrs {
+    fn name() -> &'static HeaderName {
+        &CONTENTCRS
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i HeaderValue>,
+    {
+        let value = values.next().ok_or_else(Error::invalid)?;
+        let value = value.to_str().map_err(|_| Error::invalid())?;
+        let value = value.trim_start_matches("<").trim_end_matches(">");
+
+        uri_to_srid(value).map(ContentCrs).ok_or(Error::invalid())
+    }
+
+    fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
+        values.extend(std::iter::once(
+            HeaderValue::from_str(format!("<{}>", srid_to_uri(self.0)).as_str()).unwrap(),
+        ));
+    }
 }
 
 /// Build ST_Transform SQL fragment if needed
@@ -66,18 +89,6 @@ mod tests {
             Some(3857)
         );
         assert!(parse_crs_param(Some("invalid")).is_err());
-    }
-
-    #[test]
-    fn test_content_crs_header() {
-        assert_eq!(
-            content_crs_header(4326),
-            "<http://www.opengis.net/def/crs/OGC/1.3/CRS84>"
-        );
-        assert_eq!(
-            content_crs_header(3857),
-            "<http://www.opengis.net/def/crs/EPSG/0/3857>"
-        );
     }
 
     #[test]

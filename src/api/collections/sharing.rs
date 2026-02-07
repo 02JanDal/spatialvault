@@ -1,24 +1,23 @@
+use crate::auth::AuthenticatedUser;
+use crate::error::AppError;
+use crate::services::CollectionService;
 use aide::{
     axum::{
         ApiRouter,
-        routing::{delete_with, get_with, post_with},
+        routing::{delete_with, get_with},
     },
     transform::TransformOperation,
 };
 use axum::{
     Json,
     extract::{Extension, State},
-    http::{HeaderMap, StatusCode, header},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
+use axum_extra::routing::TypedPath;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-use crate::auth::AuthenticatedUser;
-use crate::config::Config;
-use crate::error::{AppError, AppResult};
-use crate::services::CollectionService;
 
 /// Share permission level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -80,28 +79,16 @@ pub struct CollectionSharingPath {
 }
 
 pub async fn list_shares(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionSharingPath,
 ) -> Result<Response, AppError> {
-    let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!("{}/collections/{}/sharing", config.base_url, new_name)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
-
-    let shares = service.list_shares(&user.username, &collection_id).await?;
+    let shares = service
+        .list_shares(&user.username, &path.collection_id)
+        .await?;
 
     Ok(Json(SharesResponse {
-        collection_id,
+        collection_id: path.collection_id,
         shares,
     })
     .into_response())
@@ -117,29 +104,15 @@ fn list_shares_docs(op: TransformOperation) -> TransformOperation {
 }
 
 pub async fn add_share(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionSharingPath,
     Json(request): Json<AddShareRequest>,
 ) -> Result<Response, AppError> {
-    let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!("{}/collections/{}/sharing", config.base_url, new_name)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
-
     service
         .add_share(
             &user.username,
-            &collection_id,
+            &path.collection_id,
             &request.principal,
             &request.principal_type,
             request.permission,
@@ -169,30 +142,12 @@ pub struct SharePrincipalPath {
 }
 
 pub async fn remove_share(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: SharePrincipalPath,
 ) -> Result<Response, AppError> {
-    let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!(
-                "{}/collections/{}/sharing/{}",
-                config.base_url, new_name, path.principal
-            )
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
-
-    let principal = path.principal;
     service
-        .remove_share(&user.username, &collection_id, &principal)
+        .remove_share(&user.username, &path.collection_id, &path.principal)
         .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -209,11 +164,11 @@ fn remove_share_docs(op: TransformOperation) -> TransformOperation {
 pub fn routes(service: Arc<CollectionService>) -> ApiRouter {
     ApiRouter::new()
         .api_route(
-            "/collections/{collection_id}/sharing",
+            CollectionSharingPath::PATH,
             get_with(list_shares, list_shares_docs).post_with(add_share, add_share_docs),
         )
         .api_route(
-            "/collections/{collection_id}/sharing/{principal}",
+            SharePrincipalPath::PATH,
             delete_with(remove_share, remove_share_docs),
         )
         .with_state(service)

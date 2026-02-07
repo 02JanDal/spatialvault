@@ -1,7 +1,15 @@
+use super::raster::RasterFormat;
+use super::vector::{tile_matrix_sets, validate_tile_coords};
+use crate::api::common::{Link, media_type, rel};
+use crate::auth::AuthenticatedUser;
+use crate::config::Config;
+use crate::error::AppError;
+use crate::services::{CollectionService, TileService};
 use aide::{
     axum::{ApiRouter, routing::get_with},
     transform::TransformOperation,
 };
+use axum::http::header::ACCEPT;
 use axum::{
     Json,
     body::Body,
@@ -9,17 +17,13 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use axum_extra::TypedHeader;
+use axum_extra::headers::{CacheControl, ContentType, Vary};
+use axum_extra::routing::TypedPath;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-use super::raster::RasterFormat;
-use super::vector::{tile_matrix_sets, validate_tile_coords};
-use crate::api::common::{Link, media_type, rel};
-use crate::auth::AuthenticatedUser;
-use crate::config::Config;
-use crate::error::{AppError, AppResult};
-use crate::services::{CollectionService, TileService};
+use std::time::Duration;
 
 /// Query parameters for tile requests
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -144,25 +148,9 @@ pub async fn get_tileset(
     path: CollectionTilesPath,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service
-        .check_alias_redirect(&collection_id)
-        .await?
-    {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!("{}/collections/{}/tiles", config.base_url, new_name)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
-
-    let collection = service
+    let collection = collection_service
         .get_collection(&user.username, &collection_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+        .await?;
 
     let base_url = &config.base_url;
 
@@ -227,7 +215,9 @@ pub async fn get_tileset(
 
     // For raster collections, add links to COG assets for direct access
     if collection.collection_type == "raster" {
-        let assets = service.get_raster_assets(&collection_id).await?;
+        let assets = service
+            .get_raster_assets(&collection.as_collection())
+            .await?;
         for (item_id, href) in assets.iter().take(5) {
             // Limit to first 5
             links.push(
@@ -277,7 +267,6 @@ pub struct TilePath {
 
 /// Get a single tile
 pub async fn get_tile(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State((service, collection_service)): State<(Arc<TileService>, Arc<CollectionService>)>,
     path: TilePath,
@@ -285,23 +274,6 @@ pub async fn get_tile(
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = collection_service
-        .check_alias_redirect(&collection_id)
-        .await?
-    {
-        let mut redirect_headers = HeaderMap::new();
-        redirect_headers.insert(
-            header::LOCATION,
-            format!(
-                "{}/collections/{}/tiles/{}/{}/{}/{}",
-                config.base_url, new_name, path.tile_matrix_set_id, path.z, path.y, path.x
-            )
-            .parse()
-            .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, redirect_headers).into_response());
-    }
 
     let tile_matrix_set_id = path.tile_matrix_set_id;
     let z = path.z;
@@ -319,26 +291,23 @@ pub async fn get_tile(
     validate_tile_coords(z, x, y, 22)?;
 
     // Get collection to determine type
-    let collection = service
+    let collection = collection_service
         .get_collection(&user.username, &collection_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+        .await?;
 
     match collection.collection_type.as_str() {
         "vector" => {
             // Get MVT tile data
             let tile_data = service
-                .get_vector_tile(&user.username, &collection_id, z, x, y)
+                .get_vector_tile(&user.username, &collection.as_collection(), z, x, y)
                 .await?;
 
-            let mut response_headers = HeaderMap::new();
-            response_headers.insert(header::CONTENT_TYPE, media_type::MVT.parse().unwrap());
-            response_headers.insert(
-                header::CACHE_CONTROL,
-                "public, max-age=3600".parse().unwrap(),
-            );
-
-            Ok((StatusCode::OK, response_headers, Body::from(tile_data)).into_response())
+            Ok((
+                StatusCode::OK,
+                TypedHeader(media_type::MVT.parse::<ContentType>().unwrap()),
+                TypedHeader(CacheControl::new().with_public().with_max_age(Duration::from_secs(3600))),
+                Body::from(tile_data)
+            ).into_response())
         }
         "raster" => {
             // Negotiate format from Accept header and query parameter
@@ -346,22 +315,16 @@ pub async fn get_tile(
 
             // Get raster tile in requested format
             let tile_data = service
-                .get_raster_tile(&user.username, &collection_id, z, x, y, format)
+                .get_raster_tile(&user.username, &collection.as_collection(), z, x, y, format)
                 .await?;
 
-            let mut response_headers = HeaderMap::new();
-            response_headers.insert(
-                header::CONTENT_TYPE,
-                format.content_type().parse().unwrap(),
-            );
-            response_headers.insert(
-                header::CACHE_CONTROL,
-                "public, max-age=3600".parse().unwrap(),
-            );
-            // Add Vary header for proper caching with content negotiation
-            response_headers.insert(header::VARY, "Accept".parse().unwrap());
-
-            Ok((StatusCode::OK, response_headers, Body::from(tile_data)).into_response())
+            Ok((
+                StatusCode::OK,
+                TypedHeader(format.content_type().parse::<ContentType>().unwrap()),
+                TypedHeader(CacheControl::new().with_public().with_max_age(Duration::from_secs(3600))),
+                TypedHeader(Vary::from(ACCEPT)),
+                Body::from(tile_data)
+            ).into_response())
         }
         "pointcloud" => {
             Err(AppError::BadRequest(
@@ -392,12 +355,9 @@ pub fn routes(service: Arc<TileService>, collection_service: Arc<CollectionServi
             get_with(list_tile_matrix_sets, list_tile_matrix_sets_docs),
         )
         .api_route(
-            "/collections/{collection_id}/tiles",
+            CollectionTilesPath::PATH,
             get_with(get_tileset, get_tileset_docs),
         )
-        .api_route(
-            "/collections/{collection_id}/tiles/{tile_matrix_set_id}/{z}/{y}/{x}",
-            get_with(get_tile, get_tile_docs),
-        )
+        .api_route(TilePath::PATH, get_with(get_tile, get_tile_docs))
         .with_state((service, collection_service))
 }

@@ -24,24 +24,11 @@ impl CoverageService {
         Self { db }
     }
 
-    pub async fn get_collection(
-        &self,
-        _username: &str,
-        collection_id: &str,
-    ) -> AppResult<Option<Collection>> {
-        let collection: Option<Collection> =
-            sqlx::query_as("SELECT * FROM spatialvault.collections WHERE canonical_name = $1")
-                .bind(collection_id)
-                .fetch_optional(self.db.pool())
-                .await?;
-
-        Ok(collection)
-    }
-
     /// Get the spatial extent of a collection by aggregating item geometries
     async fn get_collection_extent(
         &self,
-        collection_id: uuid::Uuid,
+        username: &str,
+        collection: &Collection,
     ) -> AppResult<CollectionExtent> {
         let sql = r#"
             SELECT
@@ -53,10 +40,11 @@ impl CoverageService {
             WHERE collection_id = $1
         "#;
 
+        let mut tx = self.db.begin_as(username).await?;
         let extent: Option<(Option<f64>, Option<f64>, Option<f64>, Option<f64>)> =
             sqlx::query_as(sql)
-                .bind(collection_id)
-                .fetch_optional(self.db.pool())
+                .bind(collection.id)
+                .fetch_optional(&mut *tx)
                 .await?;
 
         match extent {
@@ -78,14 +66,11 @@ impl CoverageService {
         }
     }
 
-    pub async fn get_domainset(&self, username: &str, collection_id: &str) -> AppResult<DomainSet> {
-        let collection = self
-            .get_collection(username, collection_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Collection not found: {}", collection_id))
-            })?;
-
+    pub async fn get_domainset(
+        &self,
+        username: &str,
+        collection: &Collection,
+    ) -> AppResult<DomainSet> {
         if collection.collection_type != "raster" {
             return Err(AppError::BadRequest(
                 "Coverages only available for raster collections".to_string(),
@@ -93,7 +78,7 @@ impl CoverageService {
         }
 
         // Get actual extent from items
-        let extent = self.get_collection_extent(collection.id).await?;
+        let extent = self.get_collection_extent(username, collection).await?;
 
         // Estimate resolution based on extent (this would ideally come from COG metadata)
         let x_range = extent.maxx - extent.minx;
@@ -128,14 +113,11 @@ impl CoverageService {
         })
     }
 
-    pub async fn get_rangetype(&self, username: &str, collection_id: &str) -> AppResult<RangeType> {
-        let collection = self
-            .get_collection(username, collection_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Collection not found: {}", collection_id))
-            })?;
-
+    pub async fn get_rangetype(
+        &self,
+        username: &str,
+        collection: &Collection,
+    ) -> AppResult<RangeType> {
         if collection.collection_type != "raster" {
             return Err(AppError::BadRequest(
                 "Coverages only available for raster collections".to_string(),
@@ -144,10 +126,11 @@ impl CoverageService {
 
         // Get number of items to use as hint for band count
         // In a full implementation, we would read the COG metadata
+        let mut tx = self.db.begin_as(username).await?;
         let item_count: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM spatialvault.items WHERE collection_id = $1")
                 .bind(collection.id)
-                .fetch_one(self.db.pool())
+                .fetch_one(&mut *tx)
                 .await?;
 
         // Default to single band description (would be enhanced with GDAL metadata)
@@ -170,16 +153,9 @@ impl CoverageService {
     pub async fn get_coverage_data(
         &self,
         username: &str,
-        collection_id: &str,
+        collection: &Collection,
         _params: &CoverageSubsetParams,
     ) -> AppResult<Vec<u8>> {
-        let collection = self
-            .get_collection(username, collection_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Collection not found: {}", collection_id))
-            })?;
-
         if collection.collection_type != "raster" {
             return Err(AppError::BadRequest(
                 "Coverages only available for raster collections".to_string(),
@@ -192,6 +168,7 @@ impl CoverageService {
         // 2. Use GDAL to read and transform the COG data
         // 3. Apply any requested subsetting/resampling
 
+        let mut tx = self.db.begin_as(username).await?;
         let asset: Option<(String,)> = sqlx::query_as(
             r#"
             SELECT a.href
@@ -202,7 +179,7 @@ impl CoverageService {
             "#,
         )
         .bind(collection.id)
-        .fetch_optional(self.db.pool())
+        .fetch_optional(&mut *tx)
         .await?;
 
         match asset {
@@ -223,18 +200,10 @@ impl CoverageService {
     /// Get asset URLs for a collection (useful for clients that can read COGs directly)
     pub async fn get_collection_assets(
         &self,
-        collection_id: &str,
+        username: &str,
+        collection: &Collection,
     ) -> AppResult<Vec<(String, String)>> {
-        let collection: Option<Collection> =
-            sqlx::query_as("SELECT * FROM spatialvault.collections WHERE canonical_name = $1")
-                .bind(collection_id)
-                .fetch_optional(self.db.pool())
-                .await?;
-
-        let collection = collection.ok_or_else(|| {
-            AppError::NotFound(format!("Collection not found: {}", collection_id))
-        })?;
-
+        let mut tx = self.db.begin_as(username).await?;
         let assets: Vec<(String, String)> = sqlx::query_as(
             r#"
             SELECT i.id::text, a.href
@@ -245,7 +214,7 @@ impl CoverageService {
             "#,
         )
         .bind(collection.id)
-        .fetch_all(self.db.pool())
+        .fetch_all(&mut *tx)
         .await?;
 
         Ok(assets)

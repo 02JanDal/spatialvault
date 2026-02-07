@@ -1,5 +1,6 @@
-/// Raster tile rendering utilities
 use crate::error::{AppError, AppResult};
+use gdal::Dataset;
+use gdal::raster::ResampleAlg;
 
 /// Supported raster tile formats
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,12 +90,7 @@ pub fn overview_level_for_zoom(z: u32, raster_resolution: f64, tile_size: u32) -
 }
 
 /// Render a raster tile using GDAL
-/// This requires the `gdal-support` feature to be enabled
-#[cfg(feature = "gdal-support")]
-pub fn render_raster_tile_gdal(cog_href: &str, params: &RasterTileParams) -> AppResult<Vec<u8>> {
-    use gdal::Dataset;
-    use gdal::raster::{RasterBand, ResampleAlg};
-
+pub fn render_raster_tile(cog_href: &str, params: &RasterTileParams) -> AppResult<Vec<u8>> {
     // Convert S3 URL to GDAL VSI path
     let vsi_path = href_to_vsi_path(cog_href);
 
@@ -272,7 +268,6 @@ pub fn render_raster_tile_gdal(cog_href: &str, params: &RasterTileParams) -> App
 }
 
 /// Convert an S3 or HTTP URL to a GDAL VSI path
-#[cfg(feature = "gdal-support")]
 fn href_to_vsi_path(href: &str) -> String {
     if href.starts_with("s3://") {
         // Convert s3://bucket/key to /vsis3/bucket/key
@@ -289,6 +284,12 @@ fn href_to_vsi_path(href: &str) -> String {
 /// Create a transparent RGBA buffer
 pub fn create_transparent_buffer(size: usize) -> Vec<u8> {
     vec![0u8; size * size * 4]
+}
+
+/// Create a transparent PNG tile
+pub fn create_transparent_png(size: u32) -> AppResult<Vec<u8>> {
+    let buffer = create_transparent_buffer(size as usize);
+    encode_png(&buffer, size as usize, size as usize)
 }
 
 /// Encode RGBA buffer to the specified format
@@ -334,7 +335,6 @@ fn encode_png(rgba: &[u8], width: usize, height: usize) -> AppResult<Vec<u8>> {
 
 /// Encode RGBA buffer to JPEG
 fn encode_jpeg(rgba: &[u8], width: usize, height: usize) -> AppResult<Vec<u8>> {
-    use image::ImageEncoder;
     use image::codecs::jpeg::JpegEncoder;
     use std::io::Cursor;
 
@@ -370,20 +370,4 @@ fn encode_jpeg(rgba: &[u8], width: usize, height: usize) -> AppResult<Vec<u8>> {
     }
 
     Ok(jpeg_data)
-}
-
-/// Main entry point for raster tile rendering
-pub fn render_raster_tile(cog_href: &str, params: &RasterTileParams) -> AppResult<Vec<u8>> {
-    #[cfg(feature = "gdal-support")]
-    {
-        render_raster_tile_gdal(cog_href, params)
-    }
-    #[cfg(not(feature = "gdal-support"))]
-    {
-        Err(AppError::Processing(
-            "Raster tile rendering requires the 'gdal-support' feature. \
-            Build with: cargo build --features gdal-support"
-                .to_string(),
-        ))
-    }
 }
