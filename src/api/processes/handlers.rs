@@ -1,7 +1,7 @@
 use aide::{
     axum::{
         ApiRouter,
-        routing::{delete_with, get_with, post_with},
+        routing::{get_with, post_with},
     },
     transform::TransformOperation,
 };

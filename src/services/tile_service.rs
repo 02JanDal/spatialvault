@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::api::tiles::raster::{RasterFormat, RasterTileParams, render_raster_tile};
 use crate::api::tiles::vector::mvt_sql;
+use crate::auth::quote_ident;
 use crate::db::{Collection, Database};
 use crate::error::{AppError, AppResult};
 
@@ -14,35 +15,14 @@ impl TileService {
         Self { db }
     }
 
-    pub async fn get_collection(
-        &self,
-        username: &str,
-        collection_id: &str,
-    ) -> AppResult<Option<Collection>> {
-        let collection: Option<Collection> =
-            sqlx::query_as("SELECT * FROM spatialvault.collections WHERE canonical_name = $1")
-                .bind(collection_id)
-                .fetch_optional(self.db.pool())
-                .await?;
-
-        Ok(collection)
-    }
-
     pub async fn get_vector_tile(
         &self,
         username: &str,
-        collection_id: &str,
+        collection: &Collection,
         z: u32,
         x: u32,
         y: u32,
     ) -> AppResult<Vec<u8>> {
-        let collection = self
-            .get_collection(username, collection_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Collection not found: {}", collection_id))
-            })?;
-
         if collection.collection_type != "vector" {
             return Err(AppError::BadRequest(
                 "Vector tiles only available for vector collections".to_string(),
@@ -63,8 +43,8 @@ impl TileService {
             storage_srid,
         );
 
-        let result: Option<(Vec<u8>,)> =
-            sqlx::query_as(&sql).fetch_optional(self.db.pool()).await?;
+        let mut tx = self.db.begin_as(username).await?;
+        let result: Option<(Vec<u8>,)> = sqlx::query_as(&sql).fetch_optional(&mut *tx).await?;
 
         Ok(result.map(|(data,)| data).unwrap_or_default())
     }
@@ -72,19 +52,12 @@ impl TileService {
     pub async fn get_raster_tile(
         &self,
         _username: &str,
-        collection_id: &str,
+        collection: &Collection,
         z: u32,
         x: u32,
         y: u32,
         format: RasterFormat,
     ) -> AppResult<Vec<u8>> {
-        let collection = self
-            .get_collection("", collection_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Collection not found: {}", collection_id))
-            })?;
-
         if collection.collection_type != "raster" {
             return Err(AppError::BadRequest(
                 "Raster tiles only available for raster collections".to_string(),
@@ -132,18 +105,20 @@ impl TileService {
 
         let (minx, miny, maxx, maxy) = tile_bounds_wgs84(z, x, y);
 
-        let assets: Vec<(String,)> = sqlx::query_as(
+        let assets: Vec<(String,)> = sqlx::query_as(&format!(
             r#"
             SELECT a.href
-            FROM spatialvault.assets a
-            JOIN spatialvault.items i ON a.item_id = i.id
-            WHERE i.collection_id = $1
-              AND a.key = 'data'
+            FROM {0}.{1} a
+            JOIN {0}.{2} i ON a.item_id = i.id
+            WHERE a.key = 'data'
               AND ST_Intersects(i.geometry, ST_MakeEnvelope($2, $3, $4, $5, 4326))
             ORDER BY i.datetime DESC NULLS LAST
             LIMIT 10
             "#,
-        )
+            quote_ident(&collection.schema_name),
+            quote_ident(&format!("_{}_assets", collection.table_name)),
+            quote_ident(&collection.table_name)
+        ))
         .bind(collection.id)
         .bind(minx)
         .bind(miny)
@@ -155,6 +130,7 @@ impl TileService {
         Ok(assets.into_iter().map(|(href,)| href).collect())
     }
 
+    // TODO: move to CollectionService (same as with the same method in FeatureService)
     async fn get_storage_srid(&self, collection: &Collection) -> AppResult<i32> {
         let sql = r#"
             SELECT srid FROM geometry_columns
@@ -177,31 +153,4 @@ fn create_empty_tile(size: u32, format: RasterFormat) -> AppResult<Vec<u8>> {
 
     let buffer = create_transparent_buffer(size as usize);
     encode_image(&buffer, size as usize, size as usize, format)
-}
-
-impl TileService {
-    /// Get raster asset URLs for a collection (for COG-enabled clients)
-    pub async fn get_raster_assets(&self, collection_id: &str) -> AppResult<Vec<(String, String)>> {
-        let collection = self
-            .get_collection("", collection_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Collection not found: {}", collection_id))
-            })?;
-
-        let assets: Vec<(String, String)> = sqlx::query_as(
-            r#"
-            SELECT i.id::text, a.href
-            FROM spatialvault.assets a
-            JOIN spatialvault.items i ON a.item_id = i.id
-            WHERE i.collection_id = $1 AND a.key = 'data'
-            ORDER BY i.datetime DESC NULLS LAST
-            "#,
-        )
-        .bind(collection.id)
-        .fetch_all(self.db.pool())
-        .await?;
-
-        Ok(assets)
-    }
 }

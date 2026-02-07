@@ -2,7 +2,9 @@
 
 ## Project Overview
 
-SpatialVault is a geospatial data management API server built with Rust. It provides OGC-compliant APIs for managing geospatial features, coverages, tiles, and STAC collections with PostgreSQL/PostGIS storage and S3 object storage integration.
+SpatialVault is a geospatial data management API server built with Rust. It provides OGC-compliant APIs for managing
+geospatial features, coverages, tiles, and STAC collections with PostgreSQL/PostGIS storage and S3 object storage
+integration.
 
 ### Architecture Clarifications
 
@@ -143,6 +145,7 @@ migrations/        - Database migrations
 ## Boundaries and Constraints
 
 ### DO:
+
 - Make minimal, focused changes
 - Write tests for new functionality
 - Update OpenAPI documentation when changing APIs
@@ -151,6 +154,7 @@ migrations/        - Database migrations
 - Use existing abstractions and services
 
 ### DO NOT:
+
 - Commit secrets, credentials, or sensitive data
 - Modify database migration files that have already been applied
 - Break existing API contracts without versioning
@@ -180,6 +184,7 @@ migrations/        - Database migrations
 ## Common Tasks
 
 ### Adding a new API endpoint:
+
 1. Define the handler in `src/api/`
 2. Add route in the appropriate module
 3. Add OpenAPI documentation with Aide macros
@@ -188,12 +193,14 @@ migrations/        - Database migrations
 6. Write integration tests
 
 ### Adding a new service:
+
 1. Create service struct in `src/services/`
 2. Implement business logic
 3. Add to service initialization in `main.rs`
 4. Write unit and integration tests
 
 ### Adding a database migration:
+
 1. Create new migration file in `migrations/`
 2. Use standard SQL (compatible with PostgreSQL/PostGIS)
 3. Test migration both up and down
@@ -202,9 +209,8 @@ migrations/        - Database migrations
 ## Additional Notes
 
 - The project supports both server and worker modes (background job processing)
-  - Server mode: Runs the Axum HTTP server with all API endpoints
-  - Worker mode: Runs background job processor for OGC API Processes tasks
-- GDAL support is optional via the `gdal-support` feature flag
+    - Server mode: Runs the Axum HTTP server with all API endpoints
+    - Worker mode: Runs background job processor for OGC API Processes tasks
 - The API supports multiple OGC standards: Features, Tiles, Coverages, Processes, STAC
 - Authentication is handled via OIDC with JWT validation
 - All geospatial data uses WGS84 (EPSG:4326) or Web Mercator (EPSG:3857) coordinate systems

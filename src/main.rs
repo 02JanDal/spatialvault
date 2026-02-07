@@ -57,11 +57,16 @@ async fn main() -> anyhow::Result<()> {
 
     // Create services
     let collection_service = Arc::new(CollectionService::new(db.clone()));
-    let feature_service = Arc::new(FeatureService::new(db.clone()));
+    let feature_service = Arc::new(FeatureService::new(db.clone(), collection_service.clone()));
     let tile_service = Arc::new(TileService::new(db.clone()));
-    let coverage_service = Arc::new(CoverageService::new(db.clone()));
+    let coverage_service = Arc::new(CoverageService::new(db.clone(), collection_service.clone()));
     let process_service = Arc::new(ProcessService::new(db.clone()));
-    let stac_service = Arc::new(StacService::new(db.clone(), config.base_url.clone()));
+    let stac_service = Arc::new(StacService::new(
+        db.clone(),
+        config.base_url.clone(),
+        collection_service.clone(),
+        feature_service.clone(),
+    ));
     let item_service = Arc::new(ItemService::new(db.clone()));
 
     if worker_mode {
@@ -137,10 +142,7 @@ fn build_router(
     let protected_routes = ApiRouter::new()
         .merge(collections::handlers::routes(collection_service.clone()))
         .merge(collections::sharing::routes(collection_service.clone()))
-        .merge(features::handlers::routes(
-            feature_service,
-            collection_service.clone(),
-        ))
+        .merge(features::handlers::routes(feature_service))
         .merge(tiles::handlers::routes(
             tile_service,
             collection_service.clone(),

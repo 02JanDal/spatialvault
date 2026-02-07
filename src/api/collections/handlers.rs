@@ -1,28 +1,28 @@
-use aide::{
-    axum::{
-        ApiRouter,
-        routing::{delete_with, get_with, patch_with, post_with, put_with},
-    },
-    transform::TransformOperation,
-};
-use axum::{
-    Json,
-    extract::{Extension, Query, State},
-    http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Response},
-};
-use std::sync::Arc;
-
 use super::schemas::{
     CollectionResponse, CollectionSchema, CollectionsResponse, CreateCollectionRequest,
     ListCollectionsParams, UpdateCollectionRequest,
 };
-use crate::api::common::{Extent, Link, crs, etag, media_type, rel};
+use crate::api::common::{Extent, Link, Location, crs, etag, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::db::Collection;
 use crate::error::{AppError, AppResult};
 use crate::services::CollectionService;
+use aide::{
+    axum::{ApiRouter, routing::get_with},
+    transform::TransformOperation,
+};
+use axum::{
+    Json,
+    extract::{Extension, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use axum_extra::headers::{ETag, IfMatch};
+use axum_extra::routing::TypedPath;
+use axum_extra::{TypedHeader, headers};
+use std::sync::Arc;
+use std::time::SystemTime;
 
 /// Build the list of CRSes supported for retrieving features from a collection
 /// Always includes WGS84, and adds storage CRS if it's different from WGS84
@@ -144,12 +144,12 @@ pub async fn list_collections(
     }
 
     let response = CollectionsResponse {
+        number_returned: collection_responses.len() as u64,
         collections: collection_responses,
         links: vec![
             Link::new(format!("{}/collections", base_url), rel::SELF).with_type(media_type::JSON),
         ],
-        number_matched: None,
-        number_returned: None,
+        number_matched: None, // TODO: populate, make non-optional in model
     };
 
     Ok(Json(response))
@@ -178,23 +178,9 @@ pub async fn get_collection(
     State(service): State<Arc<CollectionService>>,
     path: CollectionPath,
 ) -> Result<Response, AppError> {
-    let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!("{}/collections/{}", config.base_url, new_name)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
-
     let collection = service
-        .get_collection(&user.username, &collection_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+        .get_collection(&user.username, &path.collection_id)
+        .await?;
 
     // Get computed extent
     let extent = service.compute_extent(&collection.as_collection()).await?;
@@ -210,11 +196,14 @@ pub async fn get_collection(
         true,
     );
 
-    // Create ETag from version
-    let mut headers = HeaderMap::new();
-    headers.insert(header::ETAG, etag::create_etag_header(collection.version)?);
-
-    Ok((headers, Json(response)).into_response())
+    Ok((
+        TypedHeader(etag::make(collection.version)),
+        TypedHeader(headers::LastModified::from(SystemTime::from(
+            collection.updated_at,
+        ))),
+        Json(response),
+    )
+        .into_response())
 }
 
 fn get_collection_docs(op: TransformOperation) -> TransformOperation {
@@ -232,7 +221,12 @@ pub async fn create_collection(
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     Json(request): Json<CreateCollectionRequest>,
-) -> AppResult<(StatusCode, HeaderMap, Json<CollectionResponse>)> {
+) -> AppResult<(
+    StatusCode,
+    TypedHeader<ETag>,
+    TypedHeader<Location>,
+    Json<CollectionResponse>,
+)> {
     // Determine owner (default to current user)
     let owner = request.owner.unwrap_or_else(|| user.username.clone());
 
@@ -275,14 +269,14 @@ pub async fn create_collection(
         true,        // include all links for consistency
     );
 
-    let mut headers = HeaderMap::new();
-    let location_value = format!("{}/collections/{}", base_url, &collection.canonical_name)
-        .parse()
-        .map_err(|_| AppError::Internal("Invalid location URL".to_string()))?;
-    headers.insert(header::LOCATION, location_value);
-    headers.insert(header::ETAG, etag::create_etag_header(collection.version)?);
+    let location_value = format!("{}/collections/{}", base_url, &collection.canonical_name);
 
-    Ok((StatusCode::CREATED, headers, Json(response)))
+    Ok((
+        StatusCode::CREATED,
+        TypedHeader(etag::make(collection.version)),
+        TypedHeader(Location(location_value)),
+        Json(response),
+    ))
 }
 
 fn create_collection_docs(op: TransformOperation) -> TransformOperation {
@@ -302,45 +296,36 @@ pub async fn patch_collection(
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionPath,
-    headers: HeaderMap,
+    if_match: Option<TypedHeader<IfMatch>>,
     Json(request): Json<UpdateCollectionRequest>,
-) -> AppResult<(HeaderMap, Json<CollectionResponse>)> {
+) -> AppResult<(StatusCode, TypedHeader<ETag>, Json<CollectionResponse>)> {
     let collection_id = path.collection_id;
-    // If-Match header is required for PATCH to prevent lost updates
-    let expected_version = Some(etag::extract_required_version(&headers)?);
 
     let collection = service
         .update_collection(
             &user.username,
             &collection_id,
-            expected_version,
+            |version| etag::matches(version, if_match),
             request.title.as_deref(),
             request.description.as_deref(),
             request.id.as_deref(),
         )
         .await?;
 
-    let base_url = &config.base_url;
-
-    // Fetch storage_crs from database
-    let storage_crs = service.get_storage_crs(&collection).await?.unwrap_or(4326);
-
-    // Compute extent
-    let extent = service.compute_extent(&collection).await?;
-
     // Build response using the common helper to ensure consistency
     let response = build_collection_response(
         &collection,
-        base_url,
-        extent,
-        storage_crs,
+        &config.base_url,
+        service.compute_extent(&collection).await?,
+        service.get_storage_crs(&collection).await?.unwrap_or(4326),
         true, // include all links for consistency
     );
 
-    let mut response_headers = HeaderMap::new();
-    response_headers.insert(header::ETAG, etag::create_etag_header(collection.version)?);
-
-    Ok((response_headers, Json(response)))
+    Ok((
+        StatusCode::OK,
+        TypedHeader(etag::make(collection.version)),
+        Json(response),
+    ))
 }
 
 fn patch_collection_docs(op: TransformOperation) -> TransformOperation {
@@ -361,12 +346,10 @@ pub async fn update_collection(
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionPath,
-    headers: HeaderMap,
+    if_match: Option<TypedHeader<IfMatch>>,
     Json(request): Json<CreateCollectionRequest>,
-) -> AppResult<(HeaderMap, Json<CollectionResponse>)> {
+) -> AppResult<(StatusCode, TypedHeader<ETag>, Json<CollectionResponse>)> {
     let collection_id = path.collection_id;
-    // If-Match header is required for PUT to prevent lost updates
-    let expected_version = Some(etag::extract_required_version(&headers)?);
 
     // Validate that the ID in body matches the path (or is absent)
     // Per STAC spec, id in body should match path or server uses path id
@@ -385,33 +368,26 @@ pub async fn update_collection(
         .replace_collection(
             &user.username,
             &collection_id,
-            expected_version,
+            |version| etag::matches(version, if_match.clone()),
             &request.title,
             request.description.as_deref(),
         )
         .await?;
 
-    let base_url = &config.base_url;
-
-    // Fetch storage_crs from database
-    let storage_crs = service.get_storage_crs(&collection).await?.unwrap_or(4326);
-
-    // Compute extent
-    let extent = service.compute_extent(&collection).await?;
-
     // Build response using the common helper to ensure consistency
     let response = build_collection_response(
         &collection,
-        base_url,
-        extent,
-        storage_crs,
+        &config.base_url,
+        service.compute_extent(&collection).await?,
+        service.get_storage_crs(&collection).await?.unwrap_or(4326),
         true, // include all links for consistency
     );
 
-    let mut response_headers = HeaderMap::new();
-    response_headers.insert(header::ETAG, etag::create_etag_header(collection.version)?);
-
-    Ok((response_headers, Json(response)))
+    Ok((
+        StatusCode::OK,
+        TypedHeader(etag::make(collection.version)),
+        Json(response),
+    ))
 }
 
 fn update_collection_docs(op: TransformOperation) -> TransformOperation {
@@ -432,14 +408,12 @@ pub async fn delete_collection(
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionPath,
-    headers: HeaderMap,
+    if_match: Option<TypedHeader<IfMatch>>,
 ) -> AppResult<StatusCode> {
-    let collection_id = path.collection_id;
-    // If-Match header is optional - when present, enables optimistic locking
-    let expected_version = etag::extract_expected_version(&headers)?;
-
     service
-        .delete_collection(&user.username, &collection_id, expected_version)
+        .delete_collection(&user.username, &path.collection_id, |version| {
+            etag::matches(version, if_match.clone())
+        })
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
@@ -462,26 +436,12 @@ pub struct CollectionSchemaPath {
 }
 
 pub async fn get_collection_schema(
-    Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<CollectionService>>,
     path: CollectionSchemaPath,
 ) -> Result<Response, AppError> {
-    let collection_id = path.collection_id;
-    // Check for alias redirect (only if no active collection with this exact name exists)
-    if let Some(new_name) = service.check_alias_redirect(&collection_id).await? {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::LOCATION,
-            format!("{}/collections/{}/schema", config.base_url, new_name)
-                .parse()
-                .map_err(|_| AppError::Internal("Invalid redirect URL".to_string()))?,
-        );
-        return Ok((StatusCode::TEMPORARY_REDIRECT, headers).into_response());
-    }
-
     let schema = service
-        .get_collection_schema(&user.username, &collection_id)
+        .get_collection_schema(&user.username, &path.collection_id)
         .await?;
 
     Ok(Json(schema).into_response())
@@ -502,14 +462,14 @@ pub fn routes(service: Arc<CollectionService>) -> ApiRouter {
                 .post_with(create_collection, create_collection_docs),
         )
         .api_route(
-            "/collections/{collection_id}",
+            CollectionPath::PATH,
             get_with(get_collection, get_collection_docs)
                 .put_with(update_collection, update_collection_docs)
                 .patch_with(patch_collection, patch_collection_docs)
                 .delete_with(delete_collection, delete_collection_docs),
         )
         .api_route(
-            "/collections/{collection_id}/schema",
+            CollectionSchemaPath::PATH,
             get_with(get_collection_schema, get_collection_schema_docs),
         )
         .with_state(service)

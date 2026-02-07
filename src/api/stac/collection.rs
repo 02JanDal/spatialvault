@@ -14,7 +14,8 @@ pub struct StacCollection {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub license: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extent: Option<Extent>,
     pub links: Vec<Link>,
@@ -41,7 +42,7 @@ impl StacCollection {
             id: id.clone(),
             title: collection.title.clone(),
             description: collection.description.clone(),
-            license: "proprietary".to_string(),
+            license: None,
             extent,
             links: vec![
                 Link::new(format!("{}/collections/{}", base_url, id), rel::SELF)

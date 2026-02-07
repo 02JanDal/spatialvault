@@ -1,6 +1,6 @@
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use openidconnect::{
-    ClientId, ClientSecret, IssuerUrl,
+    IssuerUrl,
     core::{CoreClient, CoreProviderMetadata},
 };
 use serde::{Deserialize, Serialize};

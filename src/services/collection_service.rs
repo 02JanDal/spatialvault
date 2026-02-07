@@ -29,9 +29,9 @@ impl CollectionService {
             r#"
             SELECT c.*,
                 COALESCE(
-                    (SELECT srid FROM geometry_columns 
-                     WHERE f_table_schema = c.schema_name 
-                     AND f_table_name = c.table_name 
+                    (SELECT srid FROM geometry_columns
+                     WHERE f_table_schema = c.schema_name
+                     AND f_table_name = c.table_name
                      AND f_geometry_column = 'geometry'
                      LIMIT 1),
                     4326
@@ -39,8 +39,11 @@ impl CollectionService {
             FROM spatialvault.collections c
             WHERE c.owner = $1
                OR EXISTS (
-                   SELECT 1 FROM pg_catalog.has_table_privilege($1, c.schema_name || '.' || c.table_name, 'SELECT')
-                   WHERE pg_catalog.has_table_privilege($1, c.schema_name || '.' || c.table_name, 'SELECT')
+                   SELECT 1 FROM information_schema.table_privileges tp
+                   WHERE tp.table_schema = c.schema_name
+                     AND tp.table_name = c.table_name
+                     AND tp.grantee = $1
+                     AND tp.privilege_type = 'SELECT'
                )
             ORDER BY c.created_at DESC
             LIMIT $2 OFFSET $3
@@ -59,27 +62,99 @@ impl CollectionService {
         &self,
         username: &str,
         collection_id: &str,
-    ) -> AppResult<Option<CollectionWithCrs>> {
+    ) -> AppResult<CollectionWithCrs> {
+        // Get collection with authorization check - user must be owner or have SELECT privilege
         let collection: Option<CollectionWithCrs> = sqlx::query_as(
             r#"
             SELECT c.*,
                 COALESCE(
-                    (SELECT srid FROM geometry_columns 
-                     WHERE f_table_schema = c.schema_name 
-                     AND f_table_name = c.table_name 
+                    (SELECT srid FROM geometry_columns
+                     WHERE f_table_schema = c.schema_name
+                     AND f_table_name = c.table_name
                      AND f_geometry_column = 'geometry'
                      LIMIT 1),
                     4326
                 ) as storage_crs
             FROM spatialvault.collections c
             WHERE canonical_name = $1
+              AND (
+                  c.owner = $2
+                  OR EXISTS (
+                      SELECT 1 FROM information_schema.table_privileges tp
+                      WHERE tp.table_schema = c.schema_name
+                        AND tp.table_name = c.table_name
+                        AND tp.grantee = $2
+                        AND tp.privilege_type = 'SELECT'
+                  )
+              )
             "#,
+        )
+        .bind(collection_id)
+        .bind(username)
+        .fetch_optional(self.db.pool())
+        .await?;
+
+        // check if a collection had this name previously
+        if collection.is_none() {
+            self.check_alias(collection_id).await?;
+        }
+
+        if let Some(collection) = collection {
+            Ok(collection)
+        } else {
+            Err(AppError::NotFound(format!(
+                "Collection not found: {}",
+                collection_id
+            )))
+        }
+    }
+
+    /// Check if there has previously existed a collection by this name
+    async fn check_alias(&self, collection_id: &str) -> Result<(), AppError> {
+        let new_name = sqlx::query_scalar(
+            "SELECT new_name FROM spatialvault.collection_aliases WHERE old_name = $1",
         )
         .bind(collection_id)
         .fetch_optional(self.db.pool())
         .await?;
+        if let Some(name) = new_name {
+            Err(AppError::RenamedTo(name))
+        } else {
+            Ok(())
+        }
+    }
 
-        Ok(collection)
+    /// Check if the user has write permission on a collection
+    /// Returns true if user is owner or has INSERT privilege
+    pub async fn has_write_permission(
+        &self,
+        username: &str,
+        collection_id: &str,
+    ) -> AppResult<bool> {
+        let result: Option<(bool,)> = sqlx::query_as(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM spatialvault.collections c
+                WHERE c.canonical_name = $1
+                  AND (
+                      c.owner = $2
+                      OR EXISTS (
+                          SELECT 1 FROM information_schema.table_privileges tp
+                          WHERE tp.table_schema = c.schema_name
+                            AND tp.table_name = c.table_name
+                            AND tp.grantee = $2
+                            AND tp.privilege_type = 'INSERT'
+                      )
+                  )
+            )
+            "#,
+        )
+        .bind(collection_id)
+        .bind(username)
+        .fetch_optional(self.db.pool())
+        .await?;
+
+        Ok(result.map(|(exists,)| exists).unwrap_or(false))
     }
 
     pub async fn get_alias(&self, name: &str) -> AppResult<Option<String>> {
@@ -91,24 +166,6 @@ impl CollectionService {
         .await?;
 
         Ok(alias.map(|(new_name,)| new_name))
-    }
-
-    /// Check if collection_id is an alias that should redirect.
-    /// Returns Some(new_name) if:
-    /// 1. There is NO currently active collection with the exact name
-    /// 2. AND there is an alias mapping from this name to another name
-    /// Otherwise returns None.
-    pub async fn check_alias_redirect(&self, collection_id: &str) -> AppResult<Option<String>> {
-        // First check if there's an active collection with this exact name
-        let active_collection = self.get_collection("", collection_id).await?;
-
-        if active_collection.is_some() {
-            // There is an active collection with this name, no redirect
-            return Ok(None);
-        }
-
-        // No active collection, check for alias
-        self.get_alias(collection_id).await
     }
 
     pub async fn create_collection(
@@ -177,14 +234,12 @@ impl CollectionService {
         .fetch_one(&mut *tx)
         .await?;
 
-        // For vector collections, create the feature table
-        if collection_type == "vector" {
-            // Use quote_ident for safe identifier quoting (belt and suspenders with validation)
-            let quoted_schema = quote_ident(schema_name);
-            let quoted_table = quote_ident(&table_name);
+        // Use quote_ident for safe identifier quoting (belt and suspenders with validation)
+        let quoted_schema = quote_ident(schema_name);
+        let quoted_table = quote_ident(&table_name);
 
-            let create_table_sql = format!(
-                r#"
+        let create_table_sql = format!(
+            r#"
                 CREATE TABLE {}.{} (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     geometry geometry(Geometry, {}) NOT NULL,
@@ -194,24 +249,44 @@ impl CollectionService {
                     updated_at TIMESTAMPTZ DEFAULT NOW()
                 )
                 "#,
-                quoted_schema, quoted_table, crs
-            );
-            sqlx::query(&create_table_sql).execute(&mut *tx).await?;
+            quoted_schema, quoted_table, crs
+        );
+        sqlx::query(&create_table_sql).execute(&mut *tx).await?;
 
-            // Create spatial index
-            let create_index_sql = format!(
-                r#"CREATE INDEX ON {}.{} USING GIST(geometry)"#,
+        // Create spatial index
+        let create_index_sql = format!(
+            r#"CREATE INDEX ON {}.{} USING GIST(geometry)"#,
+            quoted_schema, quoted_table
+        );
+        sqlx::query(&create_index_sql).execute(&mut *tx).await?;
+
+        // Set table ownership to the owner role
+        let quoted_owner = quote_ident(owner);
+        let alter_owner_sql = format!(
+            "ALTER TABLE {}.{} OWNER TO {}",
+            quoted_schema, quoted_table, quoted_owner
+        );
+        sqlx::query(&alter_owner_sql).execute(&mut *tx).await?;
+
+        // Add assets and datetime to table for raster/pointcloud collections
+        if collection_type == "raster" || collection_type == "pointcloud" {
+            let add_datetime_sql = format!(
+                "ALTER TABLE {}.{} ADD COLUMN datetime TIMESTAMPTZ",
                 quoted_schema, quoted_table
             );
-            sqlx::query(&create_index_sql).execute(&mut *tx).await?;
+            sqlx::query(&add_datetime_sql).execute(&mut *tx).await?;
 
-            // Set table ownership to the owner role
-            let quoted_owner = quote_ident(owner);
-            let alter_owner_sql = format!(
-                "ALTER TABLE {}.{} OWNER TO {}",
-                quoted_schema, quoted_table, quoted_owner
+            let quoted_assets_table = quote_ident(&format!("_{}_assets", table_name));
+            let create_assets_sql = format!(
+                r#"
+                    CREATE TABLE {}.{} (
+                        item_id UUID NOT NULL REFERENCES {}.{}(id) ON DELETE CASCADE,
+                        PRIMARY KEY (item_id, key)
+                    ) INHERITS (spatialvault.assets_base)
+                "#,
+                quoted_schema, quoted_assets_table, quoted_schema, quoted_table
             );
-            sqlx::query(&alter_owner_sql).execute(&mut *tx).await?;
+            sqlx::query(&create_assets_sql).execute(&mut *tx).await?;
         }
 
         tx.commit().await?;
@@ -219,20 +294,21 @@ impl CollectionService {
         Ok(collection)
     }
 
-    pub async fn update_collection(
+    pub async fn update_collection<Matches>(
         &self,
         username: &str,
         collection_id: &str,
-        expected_version: Option<i64>,
+        matches: Matches,
         title: Option<&str>,
         description: Option<&str>,
         new_name: Option<&str>,
-    ) -> AppResult<Collection> {
+    ) -> AppResult<Collection>
+    where
+        Matches: FnOnce(i64) -> bool,
+    {
         // First check if user can see the collection (visibility check)
         // This returns 404 for non-visible collections
-        let _ = self.get_collection(username, collection_id).await?.ok_or_else(|| {
-            AppError::NotFound(format!("Collection not found: {}", collection_id))
-        })?;
+        let _ = self.get_collection(username, collection_id).await?;
 
         let mut tx = self.db.pool().begin().await?;
 
@@ -253,12 +329,10 @@ impl CollectionService {
         }
 
         // Check version if If-Match header was provided
-        if let Some(version) = expected_version {
-            if current.version != version {
-                return Err(AppError::PreconditionFailed(
-                    "Collection has been modified".to_string(),
-                ));
-            }
+        if !matches(current.version) {
+            return Err(AppError::PreconditionFailed(
+                "Collection has been modified".to_string(),
+            ));
         }
 
         // Handle rename
@@ -304,20 +378,21 @@ impl CollectionService {
     }
 
     /// Replace a collection (PUT semantics - full replacement of mutable fields)
-    pub async fn replace_collection(
+    pub async fn replace_collection<Matches>(
         &self,
         username: &str,
         collection_id: &str,
-        expected_version: Option<i64>,
+        matches: Matches,
         title: &str,
         description: Option<&str>,
-    ) -> AppResult<Collection> {
+    ) -> AppResult<Collection>
+    where
+        Matches: Fn(i64) -> bool,
+    {
         // First check if user can see the collection (visibility check)
         // This returns 404 for non-visible collections
-        let _ = self.get_collection(username, collection_id).await?.ok_or_else(|| {
-            AppError::NotFound(format!("Collection not found: {}", collection_id))
-        })?;
-        
+        let _ = self.get_collection(username, collection_id).await?;
+
         let mut tx = self.db.pool().begin().await?;
 
         // Get current collection with version check
@@ -337,12 +412,10 @@ impl CollectionService {
         }
 
         // Check version if If-Match header was provided
-        if let Some(version) = expected_version {
-            if current.version != version {
-                return Err(AppError::PreconditionFailed(
-                    "Collection has been modified".to_string(),
-                ));
-            }
+        if !matches(current.version) {
+            return Err(AppError::PreconditionFailed(
+                "Collection has been modified".to_string(),
+            ));
         }
 
         // Replace collection (title and description are the only mutable fields)
@@ -369,17 +442,18 @@ impl CollectionService {
         Ok(collection)
     }
 
-    pub async fn delete_collection(
+    pub async fn delete_collection<Matches>(
         &self,
         username: &str,
         collection_id: &str,
-        expected_version: Option<i64>,
-    ) -> AppResult<()> {
+        matches: Matches,
+    ) -> AppResult<()>
+    where
+        Matches: Fn(i64) -> bool,
+    {
         // First check if user can see the collection (visibility check)
         // This returns 404 for non-visible collections
-        let _ = self.get_collection(username, collection_id).await?.ok_or_else(|| {
-            AppError::NotFound(format!("Collection not found: {}", collection_id))
-        })?;
+        let _ = self.get_collection(username, collection_id).await?;
 
         let mut tx = self.db.pool().begin().await?;
 
@@ -399,25 +473,18 @@ impl CollectionService {
         }
 
         // Check version if If-Match header was provided
-        if let Some(version) = expected_version {
-            if collection.version != version {
-                return Err(AppError::PreconditionFailed(
-                    "Collection has been modified".to_string(),
-                ));
-            }
+        if !matches(collection.version) {
+            return Err(AppError::PreconditionFailed(
+                "Collection has been modified".to_string(),
+            ));
         }
 
-        // Drop the table for vector collections
-        if collection.collection_type == "vector" {
-            let drop_sql = format!(
-                r#"DROP TABLE IF EXISTS {}.{} CASCADE"#,
-                quote_ident(&collection.schema_name),
-                quote_ident(&collection.table_name)
-            );
-            sqlx::query(&drop_sql).execute(&mut *tx).await?;
-        }
-
-        // Delete items and assets for raster/pointcloud collections (cascades)
+        let drop_sql = format!(
+            r#"DROP TABLE IF EXISTS {}.{} CASCADE"#,
+            quote_ident(&collection.schema_name),
+            quote_ident(&collection.table_name)
+        );
+        sqlx::query(&drop_sql).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM spatialvault.collections WHERE id = $1")
             .bind(collection.id)
             .execute(&mut *tx)
@@ -439,54 +506,93 @@ impl CollectionService {
         Ok(Some(Extent { spatial, temporal }))
     }
 
+    pub async fn has_datetime(&self, collection: &Collection) -> AppResult<bool> {
+        let value: Option<bool> = sqlx::query_scalar(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = $1 AND table_name = $2 AND column_name = 'datetime' AND data_type IN ('timestamp with time zone', 'timestamp without time zone')
+            )
+            "#,
+        )        .bind(&collection.schema_name)
+            .bind(&collection.table_name)
+            .fetch_one(self.db.pool())
+            .await?;
+        Ok(value.unwrap_or(false))
+    }
+    pub async fn has_assets(&self, collection: &Collection) -> AppResult<bool> {
+        let assets_table = format!("_{}_assets", collection.table_name);
+        let value: Option<bool> = sqlx::query_scalar(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                    ON tc.constraint_name = kcu.constraint_name
+                   AND tc.table_schema = kcu.table_schema
+                JOIN information_schema.constraint_column_usage ccu
+                    ON ccu.constraint_name = tc.constraint_name
+                   AND ccu.table_schema = tc.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY'
+                  AND tc.table_schema = $1
+                  AND tc.table_name = $2
+                  AND kcu.column_name = 'item_id'
+                  AND ccu.table_schema = $1
+                  AND ccu.table_name = $3
+                  AND ccu.column_name = 'id'
+            )
+            "#,
+        )
+        .bind(&collection.schema_name)
+        .bind(&assets_table)
+        .bind(&collection.table_name)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(value.unwrap_or(false))
+    }
+
+    pub async fn get_collection_extent(
+        &self,
+        collection: &Collection,
+        srid: i32,
+    ) -> AppResult<Option<Bbox>> {
+        let sql = format!(
+            r#"
+                    SELECT
+                        ST_XMin(extent) as minx,
+                        ST_YMin(extent) as miny,
+                        ST_XMax(extent) as maxx,
+                        ST_YMax(extent) as maxy
+                    FROM (
+                        SELECT ST_Extent(ST_Transform(geometry, $1)) as extent
+                        FROM {}.{}
+                    ) sub
+                    "#,
+            quote_ident(&collection.schema_name),
+            quote_ident(&collection.table_name)
+        );
+        let result: Option<(Option<f64>, Option<f64>, Option<f64>, Option<f64>)> =
+            sqlx::query_as(&sql)
+                .bind(srid)
+                .fetch_optional(self.db.pool())
+                .await?;
+
+        match result {
+            Some((Some(minx), Some(miny), Some(maxx), Some(maxy))) => {
+                Ok(Some(Bbox::two_d(minx, miny, maxx, maxy)))
+            }
+            _ => Ok(None),
+        }
+    }
+
     async fn compute_spatial_extent(
         &self,
         collection: &Collection,
     ) -> AppResult<Option<SpatialExtent>> {
-        let result: Option<(Option<f64>, Option<f64>, Option<f64>, Option<f64>)> =
-            match collection.collection_type.as_str() {
-                "vector" => {
-                    let sql = format!(
-                        r#"
-                    SELECT
-                        ST_XMin(extent) as minx,
-                        ST_YMin(extent) as miny,
-                        ST_XMax(extent) as maxx,
-                        ST_YMax(extent) as maxy
-                    FROM (
-                        SELECT ST_Extent(ST_Transform(geometry, 4326)) as extent
-                        FROM {}.{}
-                    ) sub
-                    "#,
-                        quote_ident(&collection.schema_name),
-                        quote_ident(&collection.table_name)
-                    );
-                    sqlx::query_as(&sql).fetch_optional(self.db.pool()).await?
-                }
-                "raster" | "pointcloud" => {
-                    let sql = r#"
-                    SELECT
-                        ST_XMin(extent) as minx,
-                        ST_YMin(extent) as miny,
-                        ST_XMax(extent) as maxx,
-                        ST_YMax(extent) as maxy
-                    FROM (
-                        SELECT ST_Extent(ST_Transform(geometry, 4326)) as extent
-                        FROM spatialvault.items
-                        WHERE collection_id = $1
-                    ) sub
-                "#;
-                    sqlx::query_as(sql)
-                        .bind(collection.id)
-                        .fetch_optional(self.db.pool())
-                        .await?
-                }
-                _ => None,
-            };
-
-        match result {
-            Some((Some(minx), Some(miny), Some(maxx), Some(maxy))) => Ok(Some(SpatialExtent {
-                bbox: vec![Bbox::two_d(minx, miny, maxx, maxy)],
+        match self.get_collection_extent(collection, 4326).await? {
+            Some(bbox) => Ok(Some(SpatialExtent {
+                bbox: vec![bbox],
                 crs: Some("http://www.opengis.net/def/crs/OGC/1.3/CRS84".to_string()),
             })),
             _ => Ok(None),
@@ -500,19 +606,19 @@ impl CollectionService {
         let result: Option<(
             Option<chrono::DateTime<chrono::Utc>>,
             Option<chrono::DateTime<chrono::Utc>>,
-        )> = match collection.collection_type.as_str() {
-            "raster" | "pointcloud" => {
-                let sql = r#"
+        )> = if self.has_datetime(collection).await? {
+            let sql = format!(
+                r#"
                         SELECT MIN(datetime) as min_dt, MAX(datetime) as max_dt
-                        FROM spatialvault.items
-                        WHERE collection_id = $1 AND datetime IS NOT NULL
-                    "#;
-                sqlx::query_as(sql)
-                    .bind(collection.id)
-                    .fetch_optional(self.db.pool())
-                    .await?
-            }
-            _ => None,
+                        FROM {}.{}
+                        WHERE datetime IS NOT NULL
+                    "#,
+                quote_ident(&collection.schema_name),
+                quote_ident(&collection.table_name)
+            );
+            sqlx::query_as(&sql).fetch_optional(self.db.pool()).await?
+        } else {
+            None
         };
 
         match result {
@@ -529,10 +635,6 @@ impl CollectionService {
     }
 
     pub async fn get_storage_crs(&self, collection: &Collection) -> AppResult<Option<i32>> {
-        if collection.collection_type != "vector" {
-            return Ok(None);
-        }
-
         // Get SRID from geometry column
         let sql = format!(
             r#"
@@ -554,12 +656,7 @@ impl CollectionService {
         username: &str,
         collection_id: &str,
     ) -> AppResult<CollectionSchema> {
-        let collection = self
-            .get_collection(username, collection_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Collection not found: {}", collection_id))
-            })?;
+        let collection = self.get_collection(username, collection_id).await?;
 
         // Get column information from PostgreSQL
         let columns: Vec<(String, String, String, Option<i32>)> = sqlx::query_as(
@@ -641,12 +738,7 @@ impl CollectionService {
         username: &str,
         collection_id: &str,
     ) -> AppResult<Vec<ShareEntry>> {
-        let collection = self
-            .get_collection(username, collection_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Collection not found: {}", collection_id))
-            })?;
+        let collection = self.get_collection(username, collection_id).await?;
 
         // Check if user is owner (only owner can view shares)
         if collection.owner != username {
@@ -726,12 +818,7 @@ impl CollectionService {
         _principal_type: &str,
         permission: PermissionLevel,
     ) -> AppResult<()> {
-        let collection = self
-            .get_collection(username, collection_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Collection not found: {}", collection_id))
-            })?;
+        let collection = self.get_collection(username, collection_id).await?;
 
         if collection.owner != username {
             return Err(AppError::Forbidden(
@@ -769,12 +856,7 @@ impl CollectionService {
         collection_id: &str,
         principal: &str,
     ) -> AppResult<()> {
-        let collection = self
-            .get_collection(username, collection_id)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Collection not found: {}", collection_id))
-            })?;
+        let collection = self.get_collection(username, collection_id).await?;
 
         if collection.owner != username {
             return Err(AppError::Forbidden(

@@ -1,8 +1,5 @@
 use aide::{
-    axum::{
-        ApiRouter,
-        routing::{get_with, post_with},
-    },
+    axum::{ApiRouter, routing::get_with},
     transform::TransformOperation,
 };
 use axum::{

@@ -91,9 +91,7 @@ impl PostgisContainer {
                     To run standalone integration tests, ensure:\n\
                     1. Docker is installed and running\n\
                     2. Current user has Docker access (add to 'docker' group or use sudo)\n\
-                    3. Network connectivity for pulling images\n\n\
-                    Alternatively, run tests against an external server:\n\
-                    TEST_BASE_URL=http://localhost:8080 cargo test --test ogc_tests -- --ignored",
+                    3. Network connectivity for pulling images",
                     e
                 )
             });
@@ -245,11 +243,17 @@ impl TestApp {
 
         // Create services
         let collection_service = Arc::new(CollectionService::new(db.clone()));
-        let feature_service = Arc::new(FeatureService::new(db.clone()));
+        let feature_service = Arc::new(FeatureService::new(db.clone(), collection_service.clone()));
         let tile_service = Arc::new(TileService::new(db.clone()));
-        let coverage_service = Arc::new(CoverageService::new(db.clone()));
+        let coverage_service =
+            Arc::new(CoverageService::new(db.clone(), collection_service.clone()));
         let process_service = Arc::new(ProcessService::new(db.clone()));
-        let stac_service = Arc::new(StacService::new(db.clone(), config.base_url.clone()));
+        let stac_service = Arc::new(StacService::new(
+            db.clone(),
+            config.base_url.clone(),
+            collection_service.clone(),
+            feature_service.clone(),
+        ));
 
         // Create OpenAPI spec (paths will be populated by finish_api)
         let mut openapi = openapi::create_openapi(&config);
@@ -301,10 +305,7 @@ impl TestApp {
         let protected_routes = ApiRouter::new()
             .merge(collections::handlers::routes(collection_service.clone()))
             .merge(collections::sharing::routes(collection_service.clone()))
-            .merge(features::handlers::routes(
-                feature_service,
-                collection_service.clone(),
-            ))
+            .merge(features::handlers::routes(feature_service))
             .merge(tiles::handlers::routes(
                 tile_service,
                 collection_service.clone(),
@@ -441,13 +442,21 @@ impl TestApp {
     /// Efficient for multi-user authorization tests - no new container needed.
     pub fn spawn_user(&self, mock_auth: MockAuthState) -> TestApp {
         let collection_service = Arc::new(CollectionService::new(self.db.clone()));
-        let feature_service = Arc::new(FeatureService::new(self.db.clone()));
+        let feature_service = Arc::new(FeatureService::new(
+            self.db.clone(),
+            collection_service.clone(),
+        ));
         let tile_service = Arc::new(TileService::new(self.db.clone()));
-        let coverage_service = Arc::new(CoverageService::new(self.db.clone()));
+        let coverage_service = Arc::new(CoverageService::new(
+            self.db.clone(),
+            collection_service.clone(),
+        ));
         let process_service = Arc::new(ProcessService::new(self.db.clone()));
         let stac_service = Arc::new(StacService::new(
             self.db.clone(),
             self.config.base_url.clone(),
+            collection_service.clone(),
+            feature_service.clone(),
         ));
 
         let mut openapi = openapi::create_openapi(&self.config);

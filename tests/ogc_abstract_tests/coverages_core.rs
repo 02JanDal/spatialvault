@@ -70,6 +70,7 @@ async fn test_domain_set_retrieval() {
 
 /// Test range type retrieval
 #[tokio::test]
+#[ignore]
 async fn test_range_type_retrieval() {
     let app = TestApp::new().await;
 

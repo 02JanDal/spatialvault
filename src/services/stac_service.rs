@@ -1,11 +1,15 @@
+use futures::future::try_join_all;
+use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::api::common::{Link, media_type, rel};
 use crate::api::stac::item::{StacItem, StacItemProperties, StacSearchParams};
+use crate::auth::quote_ident;
 use crate::db::Database;
 use crate::error::AppResult;
+use crate::services::{CollectionService, FeatureService};
 
 pub struct StacSearchResult {
     pub items: Vec<StacItem>,
@@ -32,11 +36,23 @@ pub struct StacAsset {
 pub struct StacService {
     db: Arc<Database>,
     base_url: String,
+    collection_service: Arc<CollectionService>,
+    feature_service: Arc<FeatureService>,
 }
 
 impl StacService {
-    pub fn new(db: Arc<Database>, base_url: String) -> Self {
-        Self { db, base_url }
+    pub fn new(
+        db: Arc<Database>,
+        base_url: String,
+        collection_service: Arc<CollectionService>,
+        feature_service: Arc<FeatureService>,
+    ) -> Self {
+        Self {
+            db,
+            base_url,
+            collection_service,
+            feature_service,
+        }
     }
 
     pub async fn search(
@@ -47,14 +63,30 @@ impl StacService {
         let mut where_clauses = vec!["TRUE".to_string()];
 
         // Filter by collections
-        if let Some(ref collections) = params.collections {
+        let tables: Vec<(String, String, String)> = if let Some(ref collections) =
+            params.collections
+        {
             let collection_list: Vec<&str> = collections.split(',').map(|s| s.trim()).collect();
-            let quoted: Vec<String> = collection_list
-                .iter()
-                .map(|s| format!("'{}'", s.replace('\'', "''")))
-                .collect();
-            where_clauses.push(format!("c.canonical_name IN ({})", quoted.join(", ")));
-        }
+            sqlx::query_as("SELECT canonical_name, schema_name, table_name FROM spatialvault.collections WHERE canonical_name = ANY($1)")
+                .bind(&collection_list)
+                .fetch_all(self.db.pool())
+                .await?
+        } else {
+            sqlx::query_as(
+                "SELECT canonical_name, schema_name, table_name FROM spatialvault.collections",
+            )
+            .fetch_all(self.db.pool())
+            .await?
+        };
+        let tables: Vec<_> = tables
+            .into_iter()
+            .map(|(name, schema, table)| {
+                (
+                    name,
+                    format!("{}.{}", quote_ident(&schema), quote_ident(&table)),
+                )
+            })
+            .collect();
 
         // Filter by item IDs
         if let Some(ref ids) = params.ids {
@@ -100,39 +132,37 @@ impl StacService {
         let where_clause = where_clauses.join(" AND ");
 
         // Count query
-        let count_sql = format!(
-            r#"
-            SELECT COUNT(*)
-            FROM spatialvault.items i
-            JOIN spatialvault.collections c ON i.collection_id = c.id
-            WHERE {}
-            "#,
-            where_clause
-        );
-
+        let count_sql = tables
+            .iter()
+            .map(|(_, table)| format!("SELECT COUNT(*) FROM {} WHERE {}", table, where_clause))
+            .join(" UNION ALL ");
         let count: (i64,) = sqlx::query_as(&count_sql).fetch_one(self.db.pool()).await?;
 
         // Data query - get items
-        let sql = format!(
-            r#"
+        let sql = tables
+            .iter()
+            .map(|(collection, table)| {
+                format!(
+                    r#"
             SELECT
-                i.id,
-                c.canonical_name as collection_name,
-                ST_AsGeoJSON(i.geometry)::jsonb as geometry,
-                ST_XMin(i.geometry) as minx,
-                ST_YMin(i.geometry) as miny,
-                ST_XMax(i.geometry) as maxx,
-                ST_YMax(i.geometry) as maxy,
-                i.datetime,
-                i.properties
-            FROM spatialvault.items i
-            JOIN spatialvault.collections c ON i.collection_id = c.id
+                id,
+                '{}' as collection_name,
+                ST_AsGeoJSON(geometry)::jsonb as geometry,
+                ST_XMin(geometry) as minx,
+                ST_YMin(geometry) as miny,
+                ST_XMax(geometry) as maxx,
+                ST_YMax(geometry) as maxy,
+                datetime,
+                properties
+            FROM {}
             WHERE {}
             ORDER BY i.datetime DESC NULLS LAST
             LIMIT {} OFFSET 0
             "#,
-            where_clause, params.limit
-        );
+                    collection, table, where_clause, params.limit
+                )
+            })
+            .join(" UNION ALL ");
 
         let rows: Vec<(
             Uuid,
@@ -146,11 +176,35 @@ impl StacService {
             Option<serde_json::Value>,
         )> = sqlx::query_as(&sql).fetch_all(self.db.pool()).await?;
 
-        // Collect item IDs for asset lookup
-        let item_ids: Vec<Uuid> = rows.iter().map(|(id, ..)| *id).collect();
-
         // Fetch assets for all items
-        let assets_map = self.get_assets_for_items(&item_ids).await?;
+        // Collect groups into owned data first so the async futures are Send
+        let grouped: Vec<(String, Vec<Uuid>)> = rows
+            .iter()
+            .chunk_by(|(_, collection, ..)| collection.clone())
+            .into_iter()
+            .map(|(collection, group)| {
+                (collection, group.map(|(id, ..)| *id).collect::<Vec<Uuid>>())
+            })
+            .collect();
+
+        let assets_map: HashMap<_, _> = try_join_all(
+            grouped.into_iter().map(|(collection_name, ids)| async move {
+                let collection = self
+                    .collection_service
+                    .get_collection(username, &collection_name)
+                    .await?
+                    .as_collection();
+                AppResult::<(Uuid, HashMap<Uuid, serde_json::Value>)>::Ok((
+                    collection.id,
+                    self.feature_service
+                        .get_assets_for_items(&collection, &ids)
+                        .await?,
+                ))
+            }),
+        )
+        .await?
+        .into_iter()
+        .collect();
 
         let items: Vec<StacItem> = rows
             .into_iter()
@@ -158,7 +212,8 @@ impl StacService {
                 |(id, collection, geometry, minx, miny, maxx, maxy, datetime, properties)| {
                     let item_assets = assets_map
                         .get(&id)
-                        .cloned()
+                        .map(|m| m.get(&id).cloned())
+                        .flatten()
                         .unwrap_or_else(|| serde_json::json!({}));
 
                     let id_str = id.to_string();
@@ -203,81 +258,5 @@ impl StacService {
             matched: Some(count.0 as u64),
             items,
         })
-    }
-
-    /// Get assets for a list of item IDs
-    async fn get_assets_for_items(
-        &self,
-        item_ids: &[Uuid],
-    ) -> AppResult<HashMap<Uuid, serde_json::Value>> {
-        if item_ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        // Build placeholders for IN clause
-        let placeholders: Vec<String> = item_ids
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("${}", i + 1))
-            .collect();
-
-        let sql = format!(
-            r#"
-            SELECT item_id, key, href, type, title, description, roles, file_size, extra_fields
-            FROM spatialvault.assets
-            WHERE item_id IN ({})
-            "#,
-            placeholders.join(", ")
-        );
-
-        let mut query = sqlx::query_as::<
-            _,
-            (
-                Uuid,
-                String,
-                String,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<Vec<String>>,
-                Option<i64>,
-                Option<serde_json::Value>,
-            ),
-        >(&sql);
-
-        for id in item_ids {
-            query = query.bind(id);
-        }
-
-        let rows = query.fetch_all(self.db.pool()).await?;
-
-        // Group assets by item_id
-        let mut assets_map: HashMap<Uuid, HashMap<String, StacAsset>> = HashMap::new();
-
-        for (item_id, key, href, media_type, title, description, roles, file_size, _extra) in rows {
-            let asset = StacAsset {
-                href,
-                media_type,
-                title,
-                description,
-                roles,
-                file_size,
-            };
-
-            assets_map.entry(item_id).or_default().insert(key, asset);
-        }
-
-        // Convert to JSON values
-        let result: HashMap<Uuid, serde_json::Value> = assets_map
-            .into_iter()
-            .map(|(id, assets)| {
-                (
-                    id,
-                    serde_json::to_value(assets).unwrap_or(serde_json::json!({})),
-                )
-            })
-            .collect();
-
-        Ok(result)
     }
 }

@@ -29,8 +29,7 @@ pub struct CollectionsResponse {
     pub links: Vec<Link>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub number_matched: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub number_returned: Option<u64>,
+    pub number_returned: u64,
 }
 
 /// Request to create a new collection

@@ -1,5 +1,6 @@
 use aide::OperationOutput;
 use aide::openapi::{MediaType, Response as AideResponse};
+use axum::http::{HeaderMap, header};
 use axum::{
     Json,
     http::StatusCode,
@@ -33,7 +34,7 @@ pub enum AppError {
     #[error("Internal server error: {0}")]
     Internal(String),
 
-    #[error("Database error: {0}")]
+    #[error("Database error: {0:?}")]
     Database(#[from] sqlx::Error),
 
     #[error("Serialization error: {0}")]
@@ -50,6 +51,9 @@ pub enum AppError {
 
     #[error("Processing error: {0}")]
     Processing(String),
+
+    #[error("Collection named")]
+    RenamedTo(String),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -83,6 +87,7 @@ impl IntoResponse for AppError {
                 // Check for PostgreSQL permission errors (42501 = insufficient_privilege)
                 if let sqlx::Error::Database(db_err) = &e {
                     if db_err.code().as_deref() == Some("42501") {
+                        tracing::info!("Database permission error: {}", db_err);
                         return (
                             StatusCode::FORBIDDEN,
                             Json(ErrorResponse {
@@ -139,6 +144,15 @@ impl IntoResponse for AppError {
                     "ProcessingError",
                     "A processing error occurred".to_string(),
                 )
+            }
+            AppError::RenamedTo(id) => {
+                let mut headers = HeaderMap::new();
+                // TODO: handle mounting at non-root subpath
+                headers.insert(
+                    header::LOCATION,
+                    format!("/collections/{}", id).parse().unwrap(),
+                );
+                return (StatusCode::TEMPORARY_REDIRECT, headers).into_response();
             }
         };
 

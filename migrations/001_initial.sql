@@ -44,26 +44,8 @@ CREATE TABLE IF NOT EXISTS spatialvault.collection_aliases (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Single pre-created table for ALL raster/pointcloud items (across all collections)
-CREATE TABLE IF NOT EXISTS spatialvault.items (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    collection_id UUID NOT NULL REFERENCES spatialvault.collections(id) ON DELETE CASCADE,
-    geometry geometry(Geometry, 4326) NOT NULL,  -- footprint/bounds
-    datetime TIMESTAMPTZ,
-    properties JSONB,
-    version BIGINT NOT NULL DEFAULT 1,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_items_collection ON spatialvault.items(collection_id);
-CREATE INDEX IF NOT EXISTS idx_items_geometry ON spatialvault.items USING GIST(geometry);
-CREATE INDEX IF NOT EXISTS idx_items_datetime ON spatialvault.items(datetime);
-
--- Normalized assets table (one row per asset per item)
-CREATE TABLE IF NOT EXISTS spatialvault.assets (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    item_id UUID NOT NULL REFERENCES spatialvault.items(id) ON DELETE CASCADE,
+-- Assets
+CREATE TABLE IF NOT EXISTS spatialvault.assets_base (
     key TEXT NOT NULL,                -- asset key, e.g., "data", "thumbnail", "metadata"
     href TEXT NOT NULL,               -- S3 URI or URL
     type TEXT,                        -- media type, e.g., "image/tiff; application=geotiff; profile=cloud-optimized"
@@ -72,11 +54,8 @@ CREATE TABLE IF NOT EXISTS spatialvault.assets (
     roles TEXT[],                     -- e.g., ARRAY['data'], ARRAY['thumbnail']
     file_size BIGINT,
     extra_fields JSONB,               -- additional STAC asset fields
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(item_id, key)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-CREATE INDEX IF NOT EXISTS idx_assets_item ON spatialvault.assets(item_id);
 
 -- OGC API Processes jobs (async operations like file import)
 CREATE TABLE IF NOT EXISTS spatialvault.processes_jobs (
@@ -105,7 +84,10 @@ RETURNS VOID AS $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
         EXECUTE format('CREATE ROLE %I WITH NOLOGIN', role_name);
+        EXECUTE format('GRANT USAGE ON SCHEMA spatialvault TO %I', role_name);
+        EXECUTE format('GRANT SELECT ON spatialvault.collections TO %I', role_name);
         EXECUTE format('CREATE SCHEMA IF NOT EXISTS %I AUTHORIZATION %I', role_name, role_name);
+        EXECUTE format('GRANT USAGE ON SCHEMA %I TO spatialvault_service', role_name);
     END IF;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

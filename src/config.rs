@@ -63,10 +63,6 @@ fn default_max_connections() -> u32 {
     10
 }
 
-fn default_service_role() -> String {
-    "spatialvault_service".to_string()
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct OidcConfig {
     pub issuer_url: String,
@@ -135,6 +131,5 @@ mod tests {
     fn test_defaults() {
         assert_eq!(default_host(), "0.0.0.0");
         assert_eq!(default_port(), 8080);
-        assert_eq!(default_service_role(), "spatialvault_service");
     }
 }
