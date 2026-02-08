@@ -9,8 +9,9 @@ use crate::api::features::query::Cql2Parser;
 use crate::auth::quote_ident;
 use crate::db::{Collection, Database};
 use crate::error::{AppResult, BadRequest, Forbidden, NotFound, PreconditionFailed};
-use snafu::OptionExt;
 use crate::services::CollectionService;
+use snafu::OptionExt;
+use sqlx::{Postgres, QueryBuilder};
 
 pub struct FeatureService {
     db: Arc<Database>,
@@ -52,25 +53,21 @@ impl FeatureService {
             let parts: Vec<f64> = bbox_str.split(',').filter_map(|s| s.parse().ok()).collect();
             if parts.len() == 4 {
                 let bbox_srid = bbox_crs.unwrap_or(storage_srid);
-                let bbox_geom = format!(
-                    "ST_MakeEnvelope({}, {}, {}, {}, {})",
-                    parts[0], parts[1], parts[2], parts[3], bbox_srid
-                );
-                if bbox_srid != storage_srid {
-                    where_clauses.push(format!(
-                        "ST_Intersects(geometry, ST_Transform({}, {}))",
-                        bbox_geom, storage_srid
-                    ));
-                } else {
-                    where_clauses.push(format!("ST_Intersects(geometry, {})", bbox_geom));
-                }
+                where_clauses.push(WhereClause::Bbox {
+                    minx: parts[0],
+                    miny: parts[1],
+                    maxx: parts[2],
+                    maxy: parts[3],
+                    bbox_srid,
+                    storage_srid,
+                });
             }
         }
 
         // Add CQL2 filter
         if let Some(filter_expr) = filter {
             let sql_filter = Cql2Parser::parse_to_sql(filter_expr, "")?;
-            where_clauses.push(sql_filter);
+            where_clauses.push(WhereClause::Cql2(sql_filter));
         }
 
         // Add datetime filter
@@ -78,55 +75,72 @@ impl FeatureService {
             if !has_datetime {
                 return Err(BadRequest {
                     message: "This collection does not have datetime".to_string(),
-                }.build());
+                }
+                .build());
             }
             if dt.contains('/') {
                 let parts: Vec<&str> = dt.split('/').collect();
                 if parts.len() == 2 {
                     let datetime_start = if parts[0] != ".." {
-                        Some(chrono::DateTime::parse_from_rfc3339(parts[0]).map_err(|_| {
-                            BadRequest { message: format!("Invalid datetime start: {}", parts[0]) }.build()
-                        })?)
+                        Some(
+                            DateTime::parse_from_rfc3339(parts[0])
+                                .map_err(|_| {
+                                    BadRequest {
+                                        message: format!("Invalid datetime start: {}", parts[0]),
+                                    }
+                                    .build()
+                                })?
+                                .with_timezone(&Utc),
+                        )
                     } else {
                         None
                     };
                     let datetime_end = if parts[1] != ".." {
-                        Some(chrono::DateTime::parse_from_rfc3339(parts[1]).map_err(|_| {
-                            BadRequest { message: format!("Invalid datetime end: {}", parts[1]) }.build()
-                        })?)
+                        Some(
+                            DateTime::parse_from_rfc3339(parts[1])
+                                .map_err(|_| {
+                                    BadRequest {
+                                        message: format!("Invalid datetime end: {}", parts[1]),
+                                    }
+                                    .build()
+                                })?
+                                .with_timezone(&Utc),
+                        )
                     } else {
                         None
                     };
 
                     if let Some(dt) = datetime_start {
-                        where_clauses.push(format!("datetime >= {}", dt.to_rfc3339()));
+                        where_clauses.push(WhereClause::DatetimeStart(dt));
                     }
                     if let Some(dt) = datetime_end {
-                        where_clauses.push(format!("datetime <= {}", dt.to_rfc3339()));
+                        where_clauses.push(WhereClause::DatetimeEnd(dt));
                     }
                 }
             } else {
-                let datetime_exact = chrono::DateTime::parse_from_rfc3339(dt)
-                    .map_err(|_| BadRequest { message: format!("Invalid datetime: {}", dt) }.build())?;
-                where_clauses.push(format!("datetime = {}", datetime_exact.to_rfc3339()));
+                let datetime_exact = DateTime::parse_from_rfc3339(dt)
+                    .map_err(|_| {
+                        BadRequest {
+                            message: format!("Invalid datetime: {}", dt),
+                        }
+                        .build()
+                    })?
+                    .with_timezone(&Utc);
+                where_clauses.push(WhereClause::DatetimeExact(datetime_exact));
             }
         }
-
-        let where_clause = if where_clauses.is_empty() {
-            "TRUE".to_string()
-        } else {
-            where_clauses.join(" AND ")
-        };
 
         let quoted_schema = quote_ident(&collection.schema_name);
         let quoted_table = quote_ident(&collection.table_name);
 
         // Count query
-        let count_sql = format!(
-            r#"SELECT COUNT(*) FROM {}.{} WHERE {}"#,
-            quoted_schema, quoted_table, where_clause
-        );
-        let count: i64 = sqlx::query_scalar(&count_sql)
+        let mut count_builder = QueryBuilder::<Postgres>::new(format!(
+            "SELECT COUNT(*) FROM {}.{} WHERE ",
+            quoted_schema, quoted_table
+        ));
+        push_where_clauses(&mut count_builder, &where_clauses);
+        let count: i64 = count_builder
+            .build_query_scalar()
             .fetch_one(self.db.pool())
             .await?;
 
@@ -137,7 +151,7 @@ impl FeatureService {
         };
 
         // Data query
-        let sql = format!(
+        let mut data_builder = QueryBuilder::<Postgres>::new(format!(
             r#"
             SELECT
                 id,
@@ -146,22 +160,23 @@ impl FeatureService {
                 ST_XMax(geometry) as maxx,
                 ST_YMax(geometry) as maxy,
                 ST_AsGeoJSON({geometry_expr})::jsonb as geometry,
-                {},
+                {datetime_column},
                 properties,
                 version
-            FROM {}.{}
-            WHERE {}
-            ORDER BY created_at DESC
-            LIMIT {} OFFSET {}
+            FROM {quoted_schema}.{quoted_table}
+            WHERE
             "#,
-            datetime_column,
-            quoted_schema,
-            quoted_table,
-            where_clause,
-            limit,
-            offset,
-            geometry_expr = geometry_expr
-        );
+            geometry_expr = geometry_expr,
+            datetime_column = datetime_column,
+            quoted_schema = quoted_schema,
+            quoted_table = quoted_table
+        ));
+        push_where_clauses(&mut data_builder, &where_clauses);
+        data_builder
+            .push(" ORDER BY created_at DESC LIMIT ")
+            .push_bind(limit as i64)
+            .push(" OFFSET ")
+            .push_bind(offset as i64);
 
         let rows: Vec<(
             Uuid,
@@ -170,10 +185,13 @@ impl FeatureService {
             f64,
             f64,
             serde_json::Value,
-            Option<chrono::DateTime<chrono::Utc>>,
+            Option<DateTime<Utc>>,
             serde_json::Value,
             i64,
-        )> = sqlx::query_as(&sql).fetch_all(self.db.pool()).await?;
+        )> = data_builder
+            .build_query_as()
+            .fetch_all(self.db.pool())
+            .await?;
 
         // Get assets for all items
         let assets_map = if has_assets {
@@ -399,7 +417,7 @@ impl FeatureService {
             f64,
             f64,
             f64,
-            Option<chrono::DateTime<chrono::Utc>>,
+            Option<DateTime<Utc>>,
             Option<serde_json::Value>,
             i64,
         )> = sqlx::query_as(&sql)
@@ -543,48 +561,48 @@ impl FeatureService {
             .fetch_optional(&mut *tx)
             .await?;
 
-        let current_version =
-            current.context(NotFound { message: "Feature not found".to_string() })?;
+        let current_version = current.context(NotFound {
+            message: "Feature not found".to_string(),
+        })?;
 
         // Check version if If-Match header was provided
         if !matches(current_version) {
             return Err(PreconditionFailed {
                 message: "Feature has been modified".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Build update
-        let mut updates = vec!["version = version + 1", "updated_at = NOW()"];
-        let mut binds: Vec<String> = Vec::new();
+        let mut update_builder = QueryBuilder::<Postgres>::new(format!(
+            "UPDATE {}.{} SET ",
+            quoted_schema, quoted_table
+        ));
+        update_builder.push("version = version + 1, updated_at = NOW()");
 
         if let Some(geom) = geometry {
-            binds.push(geom.to_string());
-            binds.push(storage_srid.to_string());
-            updates.push("geometry = ST_SetSRID(ST_GeomFromGeoJSON($2), $3::integer)");
+            update_builder.push(", geometry = ST_SetSRID(ST_GeomFromGeoJSON(");
+            update_builder.push_bind(geom.to_string());
+            update_builder.push("), ");
+            update_builder.push_bind(storage_srid);
+            update_builder.push("::integer)");
         }
 
-        if properties.is_some() {
+        if let Some(props) = properties {
             // Merge properties using JSON concatenation
-            updates.push("properties = COALESCE(properties, '{}'::jsonb) || $4");
+            update_builder.push(", properties = COALESCE(properties, '{}'::jsonb) || ");
+            update_builder.push_bind(props);
         }
 
         // TODO: sync assets in database if present
         // TODO: handle datetime
 
-        let update_sql = format!(
-            r#"
-            UPDATE {}.{}
-            SET {}
-            WHERE id = $1
-            RETURNING id
-            "#,
-            quoted_schema,
-            quoted_table,
-            updates.join(", ")
-        );
+        update_builder.push(" WHERE id = ");
+        update_builder.push_bind(feature_id);
+        update_builder.push(" RETURNING id");
 
-        let feature_id: Uuid = sqlx::query_scalar(&update_sql)
-            .bind(feature_id)
+        let feature_id: Uuid = update_builder
+            .build_query_scalar()
             .fetch_one(&mut *tx)
             .await?;
 
@@ -636,14 +654,16 @@ impl FeatureService {
             .fetch_optional(&mut *tx)
             .await?;
 
-        let current_version =
-            current.context(NotFound { message: "Feature not found".to_string() })?;
+        let current_version = current.context(NotFound {
+            message: "Feature not found".to_string(),
+        })?;
 
         // Check version if If-Match header was provided
         if !matches(current_version) {
             return Err(PreconditionFailed {
                 message: "Feature has been modified".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // TODO: consider datetime and assets
@@ -715,14 +735,16 @@ impl FeatureService {
             .fetch_optional(&mut *tx)
             .await?;
 
-        let current_version =
-            current.context(NotFound { message: "Feature not found".to_string() })?;
+        let current_version = current.context(NotFound {
+            message: "Feature not found".to_string(),
+        })?;
 
         // Check version if If-Match header was provided
         if !matches(current_version) {
             return Err(PreconditionFailed {
                 message: "Feature has been modified".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         let delete_sql = format!(
@@ -772,7 +794,10 @@ impl FeatureService {
         if has_write {
             Ok(())
         } else {
-            Err(Forbidden { message: "Write permission required".to_string() }.build())
+            Err(Forbidden {
+                message: "Write permission required".to_string(),
+            }
+            .build())
         }
     }
 
@@ -790,5 +815,93 @@ impl FeatureService {
             .await?;
 
         Ok(result.unwrap_or(4326))
+    }
+}
+
+#[derive(Debug)]
+enum WhereClause {
+    Bbox {
+        minx: f64,
+        miny: f64,
+        maxx: f64,
+        maxy: f64,
+        bbox_srid: i32,
+        storage_srid: i32,
+    },
+    Cql2(String),
+    DatetimeStart(DateTime<Utc>),
+    DatetimeEnd(DateTime<Utc>),
+    DatetimeExact(DateTime<Utc>),
+}
+
+impl WhereClause {
+    fn push_sql<'a>(&'a self, builder: &mut QueryBuilder<'a, Postgres>) {
+        match self {
+            WhereClause::Bbox {
+                minx,
+                miny,
+                maxx,
+                maxy,
+                bbox_srid,
+                storage_srid,
+            } => {
+                if bbox_srid != storage_srid {
+                    builder.push("ST_Intersects(geometry, ST_Transform(ST_MakeEnvelope(");
+                    builder.push_bind(minx);
+                    builder.push(", ");
+                    builder.push_bind(miny);
+                    builder.push(", ");
+                    builder.push_bind(maxx);
+                    builder.push(", ");
+                    builder.push_bind(maxy);
+                    builder.push(", ");
+                    builder.push_bind(bbox_srid);
+                    builder.push("), ");
+                    builder.push_bind(storage_srid);
+                    builder.push("))");
+                } else {
+                    builder.push("ST_Intersects(geometry, ST_MakeEnvelope(");
+                    builder.push_bind(minx);
+                    builder.push(", ");
+                    builder.push_bind(miny);
+                    builder.push(", ");
+                    builder.push_bind(maxx);
+                    builder.push(", ");
+                    builder.push_bind(maxy);
+                    builder.push(", ");
+                    builder.push_bind(bbox_srid);
+                    builder.push("))");
+                }
+            }
+            WhereClause::Cql2(sql) => {
+                builder.push(sql);
+            }
+            WhereClause::DatetimeStart(dt) => {
+                builder.push("datetime >= ");
+                builder.push_bind(dt);
+            }
+            WhereClause::DatetimeEnd(dt) => {
+                builder.push("datetime <= ");
+                builder.push_bind(dt);
+            }
+            WhereClause::DatetimeExact(dt) => {
+                builder.push("datetime = ");
+                builder.push_bind(dt);
+            }
+        }
+    }
+}
+
+fn push_where_clauses<'a>(builder: &mut QueryBuilder<'a, Postgres>, clauses: &'a [WhereClause]) {
+    if clauses.is_empty() {
+        builder.push("TRUE");
+        return;
+    }
+
+    for (idx, clause) in clauses.iter().enumerate() {
+        if idx > 0 {
+            builder.push(" AND ");
+        }
+        clause.push_sql(builder);
     }
 }
