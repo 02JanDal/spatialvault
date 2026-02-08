@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, BadRequest, Internal};
 
 // Re-export cql2 crate for parsing
 pub use cql2;
@@ -53,27 +53,33 @@ fn default_limit() -> u32 {
 impl FeatureQueryParams {
     pub fn validate(&self) -> AppResult<()> {
         if self.limit == 0 {
-            return Err(AppError::BadRequest("Limit must be at least 1".to_string()));
+            return Err(BadRequest {
+                message: "Limit must be at least 1".to_string(),
+            }
+            .build());
         }
 
         if self.limit > 10000 {
-            return Err(AppError::BadRequest(
-                "Limit cannot exceed 10000".to_string(),
-            ));
+            return Err(BadRequest {
+                message: "Limit cannot exceed 10000".to_string(),
+            }
+            .build());
         }
 
         if let Some(ref bbox) = self.bbox {
             let coords = self.parse_bbox(bbox)?;
             // Validate bbox coordinates are sensible
             if coords[0] >= coords[2] {
-                return Err(AppError::BadRequest(
-                    "bbox minx must be less than maxx".to_string(),
-                ));
+                return Err(BadRequest {
+                    message: "bbox minx must be less than maxx".to_string(),
+                }
+                .build());
             }
             if coords[1] >= coords[3] {
-                return Err(AppError::BadRequest(
-                    "bbox miny must be less than maxy".to_string(),
-                ));
+                return Err(BadRequest {
+                    message: "bbox miny must be less than maxy".to_string(),
+                }
+                .build());
             }
         }
 
@@ -88,26 +94,33 @@ impl FeatureQueryParams {
     pub fn parse_bbox(&self, bbox: &str) -> AppResult<[f64; 4]> {
         let parts: Vec<&str> = bbox.split(',').collect();
         if parts.len() != 4 {
-            return Err(AppError::BadRequest(
-                "bbox must have 4 values: minx,miny,maxx,maxy".to_string(),
-            ));
+            return Err(BadRequest {
+                message: "bbox must have 4 values: minx,miny,maxx,maxy".to_string(),
+            }
+            .build());
         }
 
         let mut coords = [0.0f64; 4];
         for (i, part) in parts.iter().enumerate() {
             coords[i] = part.trim().parse::<f64>().map_err(|_| {
-                AppError::BadRequest(format!(
-                    "Invalid bbox coordinate '{}': must be a number",
-                    part.trim()
-                ))
+                BadRequest {
+                    message: format!(
+                        "Invalid bbox coordinate '{}': must be a number",
+                        part.trim()
+                    ),
+                }
+                .build()
             })?;
 
             // Check for NaN and Infinity
             if !coords[i].is_finite() {
-                return Err(AppError::BadRequest(format!(
-                    "Invalid bbox coordinate '{}': must be a finite number",
-                    part.trim()
-                )));
+                return Err(BadRequest {
+                    message: format!(
+                        "Invalid bbox coordinate '{}': must be a finite number",
+                        part.trim()
+                    ),
+                }
+                .build());
             }
         }
 
@@ -124,9 +137,10 @@ impl FeatureQueryParams {
         if datetime.contains('/') {
             let parts: Vec<&str> = datetime.split('/').collect();
             if parts.len() != 2 {
-                return Err(AppError::BadRequest(
-                    "Invalid datetime interval format".to_string(),
-                ));
+                return Err(BadRequest {
+                    message: "Invalid datetime interval format".to_string(),
+                }
+                .build());
             }
             // ".." represents open-ended
             for part in parts {
@@ -144,7 +158,12 @@ impl FeatureQueryParams {
     fn validate_datetime_instant(&self, instant: &str) -> AppResult<()> {
         // Basic ISO 8601 validation
         chrono::DateTime::parse_from_rfc3339(instant)
-            .map_err(|_| AppError::BadRequest(format!("Invalid datetime: {}", instant)))?;
+            .map_err(|_| {
+                BadRequest {
+                    message: format!("Invalid datetime: {}", instant),
+                }
+                .build()
+            })?;
         Ok(())
     }
 
@@ -187,7 +206,12 @@ impl Cql2Parser {
 
         // Parse using the cql2 crate
         let expr = cql2::parse_text(filter)
-            .map_err(|e| AppError::BadRequest(format!("CQL2 parse error: {}", e)))?;
+            .map_err(|e| {
+                BadRequest {
+                    message: format!("CQL2 parse error: {}", e),
+                }
+                .build()
+            })?;
 
         // Convert to PostGIS-compatible SQL
         Self::expr_to_postgis_sql(&expr, property_prefix)
@@ -196,7 +220,12 @@ impl Cql2Parser {
     /// Parse a CQL2-json filter into SQL WHERE clause
     pub fn parse_json_to_sql(filter: &str, property_prefix: &str) -> AppResult<String> {
         let expr = cql2::parse_json(filter)
-            .map_err(|e| AppError::BadRequest(format!("CQL2 JSON parse error: {}", e)))?;
+            .map_err(|e| {
+                BadRequest {
+                    message: format!("CQL2 JSON parse error: {}", e),
+                }
+                .build()
+            })?;
 
         Self::expr_to_postgis_sql(&expr, property_prefix)
     }
@@ -234,9 +263,10 @@ impl Cql2Parser {
             // Interval (contains a vec of expressions)
             cql2::Expr::Interval { interval } => {
                 if interval.len() != 2 {
-                    return Err(AppError::BadRequest(
-                        "Interval must have 2 elements".to_string(),
-                    ));
+                    return Err(BadRequest {
+                        message: "Interval must have 2 elements".to_string(),
+                    }
+                    .build());
                 }
                 let start_sql = Self::expr_to_postgis_sql(&interval[0], prefix)?;
                 let end_sql = Self::expr_to_postgis_sql(&interval[1], prefix)?;
@@ -246,9 +276,10 @@ impl Cql2Parser {
             // BBox
             cql2::Expr::BBox { bbox } => {
                 if bbox.len() < 4 {
-                    return Err(AppError::BadRequest(
-                        "BBox must have at least 4 elements".to_string(),
-                    ));
+                    return Err(BadRequest {
+                        message: "BBox must have at least 4 elements".to_string(),
+                    }
+                    .build());
                 }
                 let coords: Vec<String> = bbox
                     .iter()
@@ -299,7 +330,10 @@ impl Cql2Parser {
             }
             "not" => {
                 if args.len() != 1 {
-                    return Err(AppError::BadRequest("NOT requires 1 argument".to_string()));
+                    return Err(BadRequest {
+                        message: "NOT requires 1 argument".to_string(),
+                    }
+                    .build());
                 }
                 let inner = Self::expr_to_postgis_sql(&args[0], prefix)?;
                 return Ok(format!("NOT ({})", inner));
@@ -319,9 +353,10 @@ impl Cql2Parser {
             "ilike" => return Self::binary_op(args, "ILIKE", prefix),
             "between" => {
                 if args.len() != 3 {
-                    return Err(AppError::BadRequest(
-                        "BETWEEN requires 3 arguments".to_string(),
-                    ));
+                    return Err(BadRequest {
+                        message: "BETWEEN requires 3 arguments".to_string(),
+                    }
+                    .build());
                 }
                 let val = Self::expr_to_postgis_sql(&args[0], prefix)?;
                 let lower = Self::expr_to_postgis_sql(&args[1], prefix)?;
@@ -330,9 +365,10 @@ impl Cql2Parser {
             }
             "in" => {
                 if args.len() < 2 {
-                    return Err(AppError::BadRequest(
-                        "IN requires at least 2 arguments".to_string(),
-                    ));
+                    return Err(BadRequest {
+                        message: "IN requires at least 2 arguments".to_string(),
+                    }
+                    .build());
                 }
                 let val = Self::expr_to_postgis_sql(&args[0], prefix)?;
                 let list: Vec<String> = args[1..]
@@ -343,9 +379,10 @@ impl Cql2Parser {
             }
             "isnull" | "is null" => {
                 if args.len() != 1 {
-                    return Err(AppError::BadRequest(
-                        "IS NULL requires 1 argument".to_string(),
-                    ));
+                    return Err(BadRequest {
+                        message: "IS NULL requires 1 argument".to_string(),
+                    }
+                    .build());
                 }
                 let inner = Self::expr_to_postgis_sql(&args[0], prefix)?;
                 return Ok(format!("{} IS NULL", inner));
@@ -368,7 +405,10 @@ impl Cql2Parser {
         for (cql_name, pg_name) in spatial_mapping {
             if op_lower == *cql_name {
                 if args.len() != 2 {
-                    return Err(AppError::BadRequest(format!("{} requires 2 arguments", op)));
+                    return Err(BadRequest {
+                    message: format!("{} requires 2 arguments", op),
+                }
+                .build());
                 }
                 let arg1 = Self::expr_to_postgis_sql(&args[0], prefix)?;
                 let arg2 = Self::expr_to_postgis_sql(&args[1], prefix)?;
@@ -379,9 +419,10 @@ impl Cql2Parser {
         // S_DWITHIN (distance within)
         if op_lower == "s_dwithin" {
             if args.len() != 3 {
-                return Err(AppError::BadRequest(
-                    "S_DWITHIN requires 3 arguments".to_string(),
-                ));
+                return Err(BadRequest {
+                    message: "S_DWITHIN requires 3 arguments".to_string(),
+                }
+                .build());
             }
             let geom1 = Self::expr_to_postgis_sql(&args[0], prefix)?;
             let geom2 = Self::expr_to_postgis_sql(&args[1], prefix)?;
@@ -392,9 +433,10 @@ impl Cql2Parser {
         // Temporal functions
         if op_lower == "t_intersects" {
             if args.len() != 2 {
-                return Err(AppError::BadRequest(
-                    "T_INTERSECTS requires 2 arguments".to_string(),
-                ));
+                return Err(BadRequest {
+                    message: "T_INTERSECTS requires 2 arguments".to_string(),
+                }
+                .build());
             }
             let time1 = Self::expr_to_postgis_sql(&args[0], prefix)?;
             let time2 = Self::expr_to_postgis_sql(&args[1], prefix)?;
@@ -404,9 +446,10 @@ impl Cql2Parser {
         // Array functions
         if op_lower == "a_contains" {
             if args.len() != 2 {
-                return Err(AppError::BadRequest(
-                    "A_CONTAINS requires 2 arguments".to_string(),
-                ));
+                return Err(BadRequest {
+                    message: "A_CONTAINS requires 2 arguments".to_string(),
+                }
+                .build());
             }
             let arr = Self::expr_to_postgis_sql(&args[0], prefix)?;
             let val = Self::expr_to_postgis_sql(&args[1], prefix)?;
@@ -425,10 +468,10 @@ impl Cql2Parser {
     /// Helper for binary operators
     fn binary_op(args: &[Box<cql2::Expr>], sql_op: &str, prefix: &str) -> AppResult<String> {
         if args.len() != 2 {
-            return Err(AppError::BadRequest(format!(
-                "{} requires 2 arguments",
-                sql_op
-            )));
+            return Err(BadRequest {
+                message: format!("{} requires 2 arguments", sql_op),
+            }
+            .build());
         }
         let left = Self::expr_to_postgis_sql(&args[0], prefix)?;
         let right = Self::expr_to_postgis_sql(&args[1], prefix)?;
@@ -444,7 +487,10 @@ impl Cql2Parser {
             )),
             cql2::Geometry::GeoJSON(geojson) => {
                 let json_str = serde_json::to_string(geojson).map_err(|e| {
-                    AppError::Internal(format!("Failed to serialize GeoJSON: {}", e))
+                    Internal {
+                        message: format!("Failed to serialize GeoJSON: {}", e),
+                    }
+                    .build()
                 })?;
                 Ok(format!(
                     "ST_GeomFromGeoJSON('{}')",

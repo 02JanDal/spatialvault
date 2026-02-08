@@ -3,7 +3,7 @@ use object_store::{ObjectStore, aws::AmazonS3Builder, path::Path};
 use std::sync::Arc;
 
 use crate::config::S3Config;
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, Storage};
 
 pub struct S3Storage {
     store: Arc<dyn ObjectStore>,
@@ -32,7 +32,7 @@ impl S3Storage {
 
         let store = builder
             .build()
-            .map_err(|e| AppError::Storage(format!("Failed to create S3 client: {}", e)))?;
+            .map_err(|e| Storage { message: format!("Failed to create S3 client: {}", e) }.build())?;
 
         Ok(Self {
             store: Arc::new(store),
@@ -47,12 +47,12 @@ impl S3Storage {
             .store
             .get(&path)
             .await
-            .map_err(|e| AppError::Storage(format!("Failed to get object: {}", e)))?;
+            .map_err(|e| Storage { message: format!("Failed to get object: {}", e) }.build())?;
 
         let bytes = result
             .bytes()
             .await
-            .map_err(|e| AppError::Storage(format!("Failed to read object: {}", e)))?;
+            .map_err(|e| Storage { message: format!("Failed to read object: {}", e) }.build())?;
 
         Ok(bytes)
     }
@@ -63,7 +63,7 @@ impl S3Storage {
         self.store
             .put(&path, data.into())
             .await
-            .map_err(|e| AppError::Storage(format!("Failed to put object: {}", e)))?;
+            .map_err(|e| Storage { message: format!("Failed to put object: {}", e) }.build())?;
 
         Ok(())
     }
@@ -74,7 +74,7 @@ impl S3Storage {
         self.store
             .delete(&path)
             .await
-            .map_err(|e| AppError::Storage(format!("Failed to delete object: {}", e)))?;
+            .map_err(|e| Storage { message: format!("Failed to delete object: {}", e) }.build())?;
 
         Ok(())
     }
@@ -85,7 +85,7 @@ impl S3Storage {
         match self.store.head(&path).await {
             Ok(_) => Ok(true),
             Err(object_store::Error::NotFound { .. }) => Ok(false),
-            Err(e) => Err(AppError::Storage(format!("Failed to check object: {}", e))),
+            Err(e) => Err(Storage { message: format!("Failed to check object: {}", e) }.build()),
         }
     }
 
@@ -96,7 +96,7 @@ impl S3Storage {
             .store
             .head(&path)
             .await
-            .map_err(|e| AppError::Storage(format!("Failed to get object metadata: {}", e)))?;
+            .map_err(|e| Storage { message: format!("Failed to get object metadata: {}", e) }.build())?;
 
         Ok(ObjectMeta {
             size: meta.size,
@@ -114,8 +114,12 @@ impl S3Storage {
         let mut keys = Vec::new();
 
         while let Some(result) = stream.next().await {
-            let meta =
-                result.map_err(|e| AppError::Storage(format!("Failed to list objects: {}", e)))?;
+            let meta = result.map_err(|e| {
+                Storage {
+                    message: format!("Failed to list objects: {}", e),
+                }
+                .build()
+            })?;
             keys.push(meta.location.to_string());
         }
 

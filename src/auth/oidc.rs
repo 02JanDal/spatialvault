@@ -8,7 +8,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::config::OidcConfig;
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, Config, Internal, Unauthorized};
+use snafu::OptionExt;
 
 // Create an async HTTP client for openidconnect
 fn http_client() -> Result<openidconnect::reqwest::Client, openidconnect::reqwest::Error> {
@@ -58,28 +59,28 @@ pub struct OidcValidator {
 impl OidcValidator {
     pub async fn new(config: OidcConfig) -> AppResult<Self> {
         let issuer_url = IssuerUrl::new(config.issuer_url.clone())
-            .map_err(|e| AppError::Config(format!("Invalid issuer URL: {}", e)))?;
+            .map_err(|e| Config { message: format!("Invalid issuer URL: {}", e) }.build())?;
 
         // Create HTTP client
         let client = http_client()
-            .map_err(|e| AppError::Config(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| Config { message: format!("Failed to create HTTP client: {}", e) }.build())?;
 
         // Discover OIDC provider metadata
         let provider_metadata = CoreProviderMetadata::discover_async(issuer_url, &client)
             .await
-            .map_err(|e| AppError::Config(format!("OIDC discovery failed: {}", e)))?;
+            .map_err(|e| Config { message: format!("OIDC discovery failed: {}", e) }.build())?;
 
         // Fetch JWKS
         let jwks_uri = provider_metadata.jwks_uri();
 
         let jwks_response = reqwest::get(jwks_uri.as_str())
             .await
-            .map_err(|e| AppError::Config(format!("Failed to fetch JWKS: {}", e)))?;
+            .map_err(|e| Config { message: format!("Failed to fetch JWKS: {}", e) }.build())?;
 
         let jwks: jsonwebtoken::jwk::JwkSet = jwks_response
             .json()
             .await
-            .map_err(|e| AppError::Config(format!("Failed to parse JWKS: {}", e)))?;
+            .map_err(|e| Config { message: format!("Failed to parse JWKS: {}", e) }.build())?;
 
         Ok(Self {
             config,
@@ -99,30 +100,30 @@ impl OidcValidator {
 
     pub async fn validate_token(&self, token: &str) -> AppResult<Claims> {
         let header = decode_header(token)
-            .map_err(|e| AppError::Unauthorized(format!("Invalid token header: {}", e)))?;
+            .map_err(|e| Unauthorized { message: format!("Invalid token header: {}", e) }.build())?;
 
         let kid = header
             .kid
-            .ok_or_else(|| AppError::Unauthorized("Token missing kid".to_string()))?;
+            .context(Unauthorized { message: "Token missing kid".to_string() })?;
 
         let jwks = self.jwks.read().await;
         let jwks = jwks
             .as_ref()
-            .ok_or_else(|| AppError::Internal("JWKS not initialized".to_string()))?;
+            .context(Internal { message: "JWKS not initialized".to_string() })?;
 
         let jwk = jwks
             .find(&kid)
-            .ok_or_else(|| AppError::Unauthorized(format!("Unknown key id: {}", kid)))?;
+            .context(Unauthorized { message: format!("Unknown key id: {}", kid) })?;
 
         let decoding_key = DecodingKey::from_jwk(jwk)
-            .map_err(|e| AppError::Internal(format!("Failed to create decoding key: {}", e)))?;
+            .map_err(|e| Internal { message: format!("Failed to create decoding key: {}", e) }.build())?;
 
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_audience(&[&self.config.audience]);
         validation.set_issuer(&[&self.config.issuer_url]);
 
         let token_data = decode::<Claims>(token, &decoding_key, &validation)
-            .map_err(|e| AppError::Unauthorized(format!("Token validation failed: {}", e)))?;
+            .map_err(|e| Unauthorized { message: format!("Token validation failed: {}", e) }.build())?;
 
         Ok(token_data.claims)
     }

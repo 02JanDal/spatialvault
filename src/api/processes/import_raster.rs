@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, BadRequest};
 
 // Re-export common types for convenience
 pub use super::{InlineValue, InputValue, ReferenceValue};
@@ -45,40 +45,47 @@ impl ImportRasterInputs {
     pub fn validate(&self) -> AppResult<()> {
         // Validate collection name
         if self.collection.is_empty() {
-            return Err(AppError::BadRequest("collection is required".to_string()));
+            return BadRequest {
+                message: "collection is required".to_string(),
+            }
+            .fail();
         }
 
         // Validate data input
         match &self.data {
             InputValue::Inline(inline) => {
                 if inline.value.is_empty() {
-                    return Err(AppError::BadRequest(
-                        "data.value cannot be empty".to_string(),
-                    ));
+                    return BadRequest {
+                        message: "data.value cannot be empty".to_string(),
+                    }
+                    .fail();
                 }
                 // Validate base64
                 if base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &inline.value)
                     .is_err()
                 {
-                    return Err(AppError::BadRequest(
-                        "data.value must be valid base64".to_string(),
-                    ));
+                    return BadRequest {
+                        message: "data.value must be valid base64".to_string(),
+                    }
+                    .fail();
                 }
             }
             InputValue::Reference(reference) => {
                 if reference.href.is_empty() {
-                    return Err(AppError::BadRequest(
-                        "data.href cannot be empty".to_string(),
-                    ));
+                    return BadRequest {
+                        message: "data.href cannot be empty".to_string(),
+                    }
+                    .fail();
                 }
                 // Validate URL scheme
                 if !reference.href.starts_with("s3://")
                     && !reference.href.starts_with("http://")
                     && !reference.href.starts_with("https://")
                 {
-                    return Err(AppError::BadRequest(
-                        "data.href must be an S3 URI or HTTP(S) URL".to_string(),
-                    ));
+                    return BadRequest {
+                        message: "data.href must be an S3 URI or HTTP(S) URL".to_string(),
+                    }
+                    .fail();
                 }
             }
         }
@@ -86,9 +93,10 @@ impl ImportRasterInputs {
         // Validate datetime if provided
         if let Some(ref dt) = self.datetime {
             if chrono::DateTime::parse_from_rfc3339(dt).is_err() {
-                return Err(AppError::BadRequest(
-                    "datetime must be a valid RFC3339 timestamp".to_string(),
-                ));
+                return BadRequest {
+                    message: "datetime must be a valid RFC3339 timestamp".to_string(),
+                }
+                .fail();
             }
         }
 

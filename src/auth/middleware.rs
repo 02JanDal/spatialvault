@@ -41,7 +41,7 @@ pub async fn auth_middleware(
         .validate_token(token)
         .await
         .map_err(|e| match e {
-            AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            AppError::Unauthorized { message, .. } => (StatusCode::UNAUTHORIZED, message),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
         })?;
 

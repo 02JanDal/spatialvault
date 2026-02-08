@@ -2,7 +2,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::db::{Database, ProcessJob};
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, NotFound};
 
 pub struct ProcessService {
     db: Arc<Database>,
@@ -134,9 +134,9 @@ impl ProcessService {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(AppError::NotFound(
-                "Job not found or cannot be dismissed".to_string(),
-            ));
+            return Err(NotFound {
+                message: "Job not found or cannot be dismissed".to_string(),
+            }.build());
         }
 
         Ok(())

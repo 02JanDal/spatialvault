@@ -5,7 +5,7 @@ use sqlx::{
 use std::sync::Arc;
 
 use crate::config::DatabaseConfig;
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, BadRequest, Internal};
 
 #[derive(Clone)]
 pub struct Database {
@@ -44,10 +44,10 @@ impl Database {
         username: &str,
     ) -> AppResult<sqlx::Transaction<'_, sqlx::Postgres>> {
         if !is_valid_role_name(username) {
-            return Err(AppError::BadRequest(format!(
+            return Err(BadRequest { message: format!(
                 "Invalid username: {}",
                 username
-            )));
+            ) }.build());
         }
 
         let mut tx = self.pool.begin().await?;
@@ -60,7 +60,7 @@ impl Database {
         sqlx::migrate!("./migrations")
             .run(&self.pool)
             .await
-            .map_err(|e| AppError::Internal(format!("Migration failed: {}", e)))?;
+            .map_err(|e| Internal { message: format!("Migration failed: {}", e) }.build())?;
         Ok(())
     }
 }

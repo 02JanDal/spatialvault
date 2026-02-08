@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, Processing};
 
 /// Check if a file is a valid Cloud Optimized GeoTIFF
 pub fn is_cog(path: &Path) -> AppResult<bool> {
@@ -44,9 +44,10 @@ pub async fn convert_to_cog(input_path: &Path, output_path: &Path) -> AppResult<
     );
 
     // Placeholder - would use gdal crate
-    Err(AppError::Processing(
-        "COG conversion not yet implemented".to_string(),
-    ))
+    Processing {
+        message: "COG conversion not yet implemented".to_string(),
+    }
+    .fail()
 }
 
 /// Extract metadata from a raster file
@@ -58,9 +59,10 @@ pub async fn extract_raster_metadata(path: &Path) -> AppResult<RasterMetadata> {
     // - Band count and types
     // - NoData values
 
-    Err(AppError::Processing(
-        "Raster metadata extraction not yet implemented".to_string(),
-    ))
+    Processing {
+        message: "Raster metadata extraction not yet implemented".to_string(),
+    }
+    .fail()
 }
 
 #[derive(Debug)]

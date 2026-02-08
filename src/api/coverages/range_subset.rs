@@ -1,4 +1,4 @@
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, BadRequest};
 use serde::Deserialize;
 
 /// Coverage subset parameters
@@ -56,30 +56,39 @@ impl CoverageSubsetParams {
                     let (low, high) = if range.contains(':') {
                         let parts: Vec<&str> = range.split(':').collect();
                         if parts.len() != 2 {
-                            return Err(AppError::BadRequest(format!(
-                                "Invalid subset range: {}",
-                                range
-                            )));
+                            return Err(BadRequest {
+                                message: format!("Invalid subset range: {}", range),
+                            }
+                            .build());
                         }
                         let low = if parts[0].is_empty() {
                             None
                         } else {
                             Some(parts[0].parse().map_err(|_| {
-                                AppError::BadRequest(format!("Invalid number: {}", parts[0]))
+                                BadRequest {
+                                    message: format!("Invalid number: {}", parts[0]),
+                                }
+                                .build()
                             })?)
                         };
                         let high = if parts[1].is_empty() {
                             None
                         } else {
                             Some(parts[1].parse().map_err(|_| {
-                                AppError::BadRequest(format!("Invalid number: {}", parts[1]))
+                                BadRequest {
+                                    message: format!("Invalid number: {}", parts[1]),
+                                }
+                                .build()
                             })?)
                         };
                         (low, high)
                     } else {
                         // Single value - slice at that point
                         let val: f64 = range.parse().map_err(|_| {
-                            AppError::BadRequest(format!("Invalid number: {}", range))
+                            BadRequest {
+                                message: format!("Invalid number: {}", range),
+                            }
+                            .build()
                         })?;
                         (Some(val), Some(val))
                     };

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, Processing};
 
 /// Check if a file is a valid Cloud Optimized Point Cloud
 pub fn is_copc(path: &Path) -> AppResult<bool> {
@@ -45,9 +45,10 @@ pub async fn convert_to_copc(input_path: &Path, output_path: &Path) -> AppResult
     );
 
     // Placeholder - would use PDAL or untwine
-    Err(AppError::Processing(
-        "COPC conversion not yet implemented".to_string(),
-    ))
+    Processing {
+        message: "COPC conversion not yet implemented".to_string(),
+    }
+    .fail()
 }
 
 /// Extract metadata from a point cloud file
@@ -59,9 +60,10 @@ pub async fn extract_pointcloud_metadata(path: &Path) -> AppResult<PointCloudMet
     // - Point format
     // - Dimension names
 
-    Err(AppError::Processing(
-        "Point cloud metadata extraction not yet implemented".to_string(),
-    ))
+    Processing {
+        message: "Point cloud metadata extraction not yet implemented".to_string(),
+    }
+    .fail()
 }
 
 #[derive(Debug)]

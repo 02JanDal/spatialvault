@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::api::processes::InputValue;
 use crate::db::{Collection, Database};
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, BadRequest, Processing};
 use crate::processing::{cog, copc};
 use crate::services::{CollectionService, ItemService, ProcessService};
 use crate::storage::S3Storage;
@@ -104,10 +104,10 @@ impl JobWorker {
                 self.process_import_pointcloud(job_id, &owner, &inputs)
                     .await
             }
-            _ => Err(AppError::Processing(format!(
+            _ => Processing { message: format!(
                 "Unknown process: {}",
                 process_id
-            ))),
+            )}.fail(),
         };
 
         match result {
@@ -411,14 +411,14 @@ impl JobWorker {
             Ok(collection) => {
                 // Verify type matches
                 if collection.collection_type != collection_type {
-                    return Err(AppError::BadRequest(format!(
+                    return Err(BadRequest { message: format!(
                         "Collection '{}' exists but is type '{}', expected '{}'",
                         collection_name, collection.collection_type, collection_type
-                    )));
+                    )}.build());
                 }
                 return Ok(collection.as_collection());
             }
-            Err(AppError::NotFound(_)) => {}
+            Err(AppError::NotFound { .. }) => {}
             Err(e) => return Err(e),
         }
 
@@ -454,7 +454,7 @@ impl JobWorker {
                 // Decode base64 and write to temp file
                 let data = base64::engine::general_purpose::STANDARD
                     .decode(&inline.value)
-                    .map_err(|e| AppError::BadRequest(format!("Invalid base64: {}", e)))?;
+                    .map_err(|e| BadRequest { message: format!("Invalid base64: {}", e) }.build())?;
 
                 // Determine extension from media type if available
                 let extension = inline
@@ -514,26 +514,26 @@ impl JobWorker {
             // HTTP download
             let response = reqwest::get(url)
                 .await
-                .map_err(|e| AppError::Processing(format!("Failed to download: {}", e)))?;
+                .map_err(|e| Processing { message: format!("Failed to download: {}", e) }.build())?;
 
             if !response.status().is_success() {
-                return Err(AppError::Processing(format!(
+                return Err(Processing { message: format!(
                     "Download failed with status: {}",
                     response.status()
-                )));
+                )}.build());
             }
 
             let bytes = response
                 .bytes()
                 .await
-                .map_err(|e| AppError::Processing(format!("Failed to read response: {}", e)))?;
+                .map_err(|e| Processing { message: format!("Failed to read response: {}", e) }.build())?;
 
             tokio::fs::write(&local_path, &bytes).await?;
         } else {
-            return Err(AppError::BadRequest(format!(
+            return Err(BadRequest { message: format!(
                 "Unsupported URL scheme: {}",
                 url
-            )));
+            )}.build());
         }
 
         tracing::info!("Downloaded {} to {:?}", url, local_path);

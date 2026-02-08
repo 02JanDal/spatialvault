@@ -4,7 +4,7 @@ use crate::api::tiles::raster::{RasterFormat, RasterTileParams, render_raster_ti
 use crate::api::tiles::vector::mvt_sql;
 use crate::auth::quote_ident;
 use crate::db::{Collection, Database};
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, BadRequest, Processing};
 
 pub struct TileService {
     db: Arc<Database>,
@@ -24,9 +24,9 @@ impl TileService {
         y: u32,
     ) -> AppResult<Vec<u8>> {
         if collection.collection_type != "vector" {
-            return Err(AppError::BadRequest(
-                "Vector tiles only available for vector collections".to_string(),
-            ));
+            return Err(BadRequest {
+                message: "Vector tiles only available for vector collections".to_string(),
+            }.build());
         }
 
         // Get storage SRID
@@ -59,9 +59,9 @@ impl TileService {
         format: RasterFormat,
     ) -> AppResult<Vec<u8>> {
         if collection.collection_type != "raster" {
-            return Err(AppError::BadRequest(
-                "Raster tiles only available for raster collections".to_string(),
-            ));
+            return Err(BadRequest {
+                message: "Raster tiles only available for raster collections".to_string(),
+            }.build());
         }
 
         // Find COG files that intersect with the tile bounds
@@ -88,7 +88,7 @@ impl TileService {
         let href = cog_href.clone();
         let result = tokio::task::spawn_blocking(move || render_raster_tile(&href, &params))
             .await
-            .map_err(|e| AppError::Processing(format!("Task join error: {}", e)))??;
+            .map_err(|e| Processing { message: format!("Task join error: {}", e) }.build())??;
 
         Ok(result)
     }

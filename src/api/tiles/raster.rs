@@ -1,4 +1,4 @@
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, Processing};
 use gdal::Dataset;
 use gdal::raster::ResampleAlg;
 
@@ -96,13 +96,23 @@ pub fn render_raster_tile(cog_href: &str, params: &RasterTileParams) -> AppResul
 
     // Open the dataset
     let dataset = Dataset::open(&vsi_path)
-        .map_err(|e| AppError::Processing(format!("Failed to open raster: {}", e)))?;
+        .map_err(|e| {
+            Processing {
+                message: format!("Failed to open raster: {}", e),
+            }
+            .build()
+        })?;
 
     // Get raster dimensions
     let (raster_width, raster_height) = dataset.raster_size();
     let geo_transform = dataset
         .geo_transform()
-        .map_err(|e| AppError::Processing(format!("Failed to get geotransform: {}", e)))?;
+        .map_err(|e| {
+            Processing {
+                message: format!("Failed to get geotransform: {}", e),
+            }
+            .build()
+        })?;
 
     // Calculate tile bounds in Web Mercator
     let (tile_minx, tile_miny, tile_maxx, tile_maxy) =
@@ -169,9 +179,12 @@ pub fn render_raster_tile(cog_href: &str, params: &RasterTileParams) -> AppResul
     if band_count >= 3 {
         // RGB or RGBA raster
         for (band_idx, rgba_idx) in [(1, 0), (2, 1), (3, 2)] {
-            let band = dataset
-                .rasterband(band_idx)
-                .map_err(|e| AppError::Processing(format!("Failed to get band: {}", e)))?;
+            let band = dataset.rasterband(band_idx).map_err(|e| {
+                Processing {
+                    message: format!("Failed to get band: {}", e),
+                }
+                .build()
+            })?;
 
             let data: Vec<u8> = band
                 .read_as::<u8>(
@@ -180,7 +193,12 @@ pub fn render_raster_tile(cog_href: &str, params: &RasterTileParams) -> AppResul
                     (dst_width, dst_height),
                     Some(ResampleAlg::Bilinear),
                 )
-                .map_err(|e| AppError::Processing(format!("Failed to read band: {}", e)))?
+                .map_err(|e| {
+                    Processing {
+                        message: format!("Failed to read band: {}", e),
+                    }
+                    .build()
+                })?
                 .data()
                 .to_vec();
 
@@ -204,7 +222,12 @@ pub fn render_raster_tile(cog_href: &str, params: &RasterTileParams) -> AppResul
         if band_count >= 4 {
             let band = dataset
                 .rasterband(4)
-                .map_err(|e| AppError::Processing(format!("Failed to get alpha band: {}", e)))?;
+                .map_err(|e| {
+                    Processing {
+                        message: format!("Failed to get alpha band: {}", e),
+                    }
+                    .build()
+                })?;
 
             let data: Vec<u8> = band
                 .read_as::<u8>(
@@ -213,7 +236,12 @@ pub fn render_raster_tile(cog_href: &str, params: &RasterTileParams) -> AppResul
                     (dst_width, dst_height),
                     Some(ResampleAlg::Bilinear),
                 )
-                .map_err(|e| AppError::Processing(format!("Failed to read alpha band: {}", e)))?
+                .map_err(|e| {
+                    Processing {
+                        message: format!("Failed to read alpha band: {}", e),
+                    }
+                    .build()
+                })?
                 .data()
                 .to_vec();
 
@@ -233,7 +261,12 @@ pub fn render_raster_tile(cog_href: &str, params: &RasterTileParams) -> AppResul
         // Single band - render as grayscale
         let band = dataset
             .rasterband(1)
-            .map_err(|e| AppError::Processing(format!("Failed to get band: {}", e)))?;
+            .map_err(|e| {
+                Processing {
+                    message: format!("Failed to get band: {}", e),
+                }
+                .build()
+            })?;
 
         let data: Vec<u8> = band
             .read_as::<u8>(
@@ -242,7 +275,12 @@ pub fn render_raster_tile(cog_href: &str, params: &RasterTileParams) -> AppResul
                 (dst_width, dst_height),
                 Some(ResampleAlg::Bilinear),
             )
-            .map_err(|e| AppError::Processing(format!("Failed to read band: {}", e)))?
+            .map_err(|e| {
+                Processing {
+                    message: format!("Failed to read band: {}", e),
+                }
+                .build()
+            })?
             .data()
             .to_vec();
 
@@ -323,11 +361,21 @@ fn encode_png(rgba: &[u8], width: usize, height: usize) -> AppResult<Vec<u8>> {
 
         let mut writer = encoder
             .write_header()
-            .map_err(|e| AppError::Processing(format!("Failed to write PNG header: {}", e)))?;
+            .map_err(|e| {
+                Processing {
+                    message: format!("Failed to write PNG header: {}", e),
+                }
+                .build()
+            })?;
 
         writer
             .write_image_data(rgba)
-            .map_err(|e| AppError::Processing(format!("Failed to write PNG data: {}", e)))?;
+            .map_err(|e| {
+                Processing {
+                    message: format!("Failed to write PNG data: {}", e),
+                }
+                .build()
+            })?;
     }
 
     Ok(png_data)
@@ -366,7 +414,12 @@ fn encode_jpeg(rgba: &[u8], width: usize, height: usize) -> AppResult<Vec<u8>> {
                 height as u32,
                 image::ExtendedColorType::Rgb8,
             )
-            .map_err(|e| AppError::Processing(format!("Failed to encode JPEG: {}", e)))?;
+            .map_err(|e| {
+                Processing {
+                    message: format!("Failed to encode JPEG: {}", e),
+                }
+                .build()
+            })?;
     }
 
     Ok(jpeg_data)

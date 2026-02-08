@@ -3,7 +3,7 @@ use super::vector::{tile_matrix_sets, validate_tile_coords};
 use crate::api::common::{Link, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
-use crate::error::AppError;
+use crate::error::{AppError, BadRequest, NotFound};
 use crate::services::{CollectionService, TileService};
 use aide::{
     axum::{ApiRouter, routing::get_with},
@@ -266,10 +266,10 @@ pub async fn get_tile(
     let x = path.x;
     // Validate tile matrix set
     if tile_matrix_set_id != tile_matrix_sets::WEB_MERCATOR_QUAD {
-        return Err(AppError::NotFound(format!(
-            "TileMatrixSet not supported: {}",
-            tile_matrix_set_id
-        )));
+        return Err(NotFound {
+            message: format!("TileMatrixSet not supported: {}", tile_matrix_set_id),
+        }
+        .build());
     }
 
     // Validate coordinates
@@ -312,14 +312,15 @@ pub async fn get_tile(
             ).into_response())
         }
         "pointcloud" => {
-            Err(AppError::BadRequest(
-                "Tiles not available for point cloud collections. Use STAC items endpoint to access COPC files.".to_string(),
-            ))
+            Err(BadRequest {
+                message: "Tiles not available for point cloud collections. Use STAC items endpoint to access COPC files.".to_string(),
+            }
+            .build())
         }
-        _ => Err(AppError::BadRequest(format!(
-            "Unknown collection type: {}",
-            collection.collection_type
-        ))),
+        _ => Err(BadRequest {
+            message: format!("Unknown collection type: {}", collection.collection_type),
+        }
+        .build()),
     }
 }
 

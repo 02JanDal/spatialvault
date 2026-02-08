@@ -6,7 +6,8 @@ use crate::api::collections::sharing::{PermissionLevel, ShareEntry};
 use crate::api::common::{Bbox, Extent, SpatialExtent, TemporalExtent};
 use crate::auth::{RoleManager, is_valid_role_name, quote_ident};
 use crate::db::{Collection, CollectionWithCrs, Database};
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, BadRequest, Forbidden, NotFound, PreconditionFailed, RenamedTo};
+use snafu::OptionExt;
 
 pub struct CollectionService {
     db: Arc<Database>,
@@ -102,23 +103,23 @@ impl CollectionService {
         if let Some(collection) = collection {
             Ok(collection)
         } else {
-            Err(AppError::NotFound(format!(
+            Err(NotFound { message: format!(
                 "Collection not found: {}",
                 collection_id
-            )))
+            ) }.build())
         }
     }
 
     /// Check if there has previously existed a collection by this name
     async fn check_alias(&self, collection_id: &str) -> Result<(), AppError> {
-        let new_name = sqlx::query_scalar(
+        let new_name: Option<String> = sqlx::query_scalar(
             "SELECT new_name FROM spatialvault.collection_aliases WHERE old_name = $1",
         )
         .bind(collection_id)
         .fetch_optional(self.db.pool())
         .await?;
         if let Some(name) = new_name {
-            Err(AppError::RenamedTo(name))
+            Err(RenamedTo { message: name }.build())
         } else {
             Ok(())
         }
@@ -186,27 +187,27 @@ impl CollectionService {
         let parts: Vec<&str> = canonical_name.split(':').collect();
         let schema_name = parts
             .first()
-            .ok_or_else(|| AppError::BadRequest("Invalid collection name".to_string()))?;
+            .context(BadRequest { message: "Invalid collection name".to_string() })?;
         let table_name = parts[1..].join("_");
 
         if table_name.is_empty() {
-            return Err(AppError::BadRequest(
-                "Collection name must have at least two segments".to_string(),
-            ));
+            return Err(BadRequest {
+                message: "Collection name must have at least two segments".to_string(),
+            }.build());
         }
 
         // Validate schema and table names to prevent SQL injection
         if !is_valid_role_name(schema_name) {
-            return Err(AppError::BadRequest(format!(
+            return Err(BadRequest { message: format!(
                 "Invalid schema name: {}",
                 schema_name
-            )));
+            ) }.build());
         }
         if !is_valid_role_name(&table_name) {
-            return Err(AppError::BadRequest(format!(
+            return Err(BadRequest { message: format!(
                 "Invalid table name: {}",
                 table_name
-            )));
+            ) }.build());
         }
 
         let id = Uuid::new_v4();
@@ -319,20 +320,20 @@ impl CollectionService {
         .bind(collection_id)
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+        .context(NotFound { message: format!("Collection not found: {}", collection_id) })?;
 
         // Check ownership (only owner can update)
         if current.owner != username {
-            return Err(AppError::Forbidden(
-                "Only owner can update collection".to_string(),
-            ));
+            return Err(Forbidden {
+                message: "Only owner can update collection".to_string(),
+            }.build());
         }
 
         // Check version if If-Match header was provided
         if !matches(current.version) {
-            return Err(AppError::PreconditionFailed(
-                "Collection has been modified".to_string(),
-            ));
+            return Err(PreconditionFailed {
+                message: "Collection has been modified".to_string(),
+            }.build());
         }
 
         // Handle rename
@@ -402,20 +403,20 @@ impl CollectionService {
         .bind(collection_id)
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+        .context(NotFound { message: format!("Collection not found: {}", collection_id) })?;
 
         // Check ownership first (before version check for proper error ordering)
         if current.owner != username {
-            return Err(AppError::Forbidden(
-                "Only owner can update collection".to_string(),
-            ));
+            return Err(Forbidden {
+                message: "Only owner can update collection".to_string(),
+            }.build());
         }
 
         // Check version if If-Match header was provided
         if !matches(current.version) {
-            return Err(AppError::PreconditionFailed(
-                "Collection has been modified".to_string(),
-            ));
+            return Err(PreconditionFailed {
+                message: "Collection has been modified".to_string(),
+            }.build());
         }
 
         // Replace collection (title and description are the only mutable fields)
@@ -463,20 +464,20 @@ impl CollectionService {
         .bind(collection_id)
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("Collection not found: {}", collection_id)))?;
+        .context(NotFound { message: format!("Collection not found: {}", collection_id) })?;
 
         // Check ownership (only owner can delete)
         if collection.owner != username {
-            return Err(AppError::Forbidden(
-                "Only owner can delete collection".to_string(),
-            ));
+            return Err(Forbidden {
+                message: "Only owner can delete collection".to_string(),
+            }.build());
         }
 
         // Check version if If-Match header was provided
         if !matches(collection.version) {
-            return Err(AppError::PreconditionFailed(
-                "Collection has been modified".to_string(),
-            ));
+            return Err(PreconditionFailed {
+                message: "Collection has been modified".to_string(),
+            }.build());
         }
 
         let drop_sql = format!(
@@ -742,9 +743,9 @@ impl CollectionService {
 
         // Check if user is owner (only owner can view shares)
         if collection.owner != username {
-            return Err(AppError::Forbidden(
-                "Only owner can view sharing settings".to_string(),
-            ));
+            return Err(Forbidden {
+                message: "Only owner can view sharing settings".to_string(),
+            }.build());
         }
 
         // Query PostgreSQL grants from information_schema
@@ -821,15 +822,15 @@ impl CollectionService {
         let collection = self.get_collection(username, collection_id).await?;
 
         if collection.owner != username {
-            return Err(AppError::Forbidden(
-                "Only owner can manage sharing".to_string(),
-            ));
+            return Err(Forbidden {
+                message: "Only owner can manage sharing".to_string(),
+            }.build());
         }
 
         // Verify role exists (groups/users assumed to be pre-existing)
         let role_manager = RoleManager::new(self.db.pool());
         if !role_manager.role_exists(principal).await? {
-            return Err(AppError::NotFound(format!("Role not found: {}", principal)));
+            return Err(NotFound { message: format!("Role not found: {}", principal) }.build());
         }
 
         // Grant privileges
@@ -859,9 +860,9 @@ impl CollectionService {
         let collection = self.get_collection(username, collection_id).await?;
 
         if collection.owner != username {
-            return Err(AppError::Forbidden(
-                "Only owner can manage sharing".to_string(),
-            ));
+            return Err(Forbidden {
+                message: "Only owner can manage sharing".to_string(),
+            }.build());
         }
 
         let role_manager = RoleManager::new(self.db.pool());

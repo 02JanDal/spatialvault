@@ -8,7 +8,8 @@ use crate::api::features::crs::transform_geometry_sql;
 use crate::api::features::query::Cql2Parser;
 use crate::auth::quote_ident;
 use crate::db::{Collection, Database};
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, BadRequest, Forbidden, NotFound, PreconditionFailed};
+use snafu::OptionExt;
 use crate::services::CollectionService;
 
 pub struct FeatureService {
@@ -75,23 +76,23 @@ impl FeatureService {
         // Add datetime filter
         if let Some(dt) = datetime {
             if !has_datetime {
-                return Err(AppError::BadRequest(
-                    "This collection does not have datetime".to_string(),
-                ));
+                return Err(BadRequest {
+                    message: "This collection does not have datetime".to_string(),
+                }.build());
             }
             if dt.contains('/') {
                 let parts: Vec<&str> = dt.split('/').collect();
                 if parts.len() == 2 {
                     let datetime_start = if parts[0] != ".." {
                         Some(chrono::DateTime::parse_from_rfc3339(parts[0]).map_err(|_| {
-                            AppError::BadRequest(format!("Invalid datetime start: {}", parts[0]))
+                            BadRequest { message: format!("Invalid datetime start: {}", parts[0]) }.build()
                         })?)
                     } else {
                         None
                     };
                     let datetime_end = if parts[1] != ".." {
                         Some(chrono::DateTime::parse_from_rfc3339(parts[1]).map_err(|_| {
-                            AppError::BadRequest(format!("Invalid datetime end: {}", parts[1]))
+                            BadRequest { message: format!("Invalid datetime end: {}", parts[1]) }.build()
                         })?)
                     } else {
                         None
@@ -106,7 +107,7 @@ impl FeatureService {
                 }
             } else {
                 let datetime_exact = chrono::DateTime::parse_from_rfc3339(dt)
-                    .map_err(|_| AppError::BadRequest(format!("Invalid datetime: {}", dt)))?;
+                    .map_err(|_| BadRequest { message: format!("Invalid datetime: {}", dt) }.build())?;
                 where_clauses.push(format!("datetime = {}", datetime_exact.to_rfc3339()));
             }
         }
@@ -463,9 +464,9 @@ impl FeatureService {
             .as_collection();
 
         if collection.collection_type != "vector" {
-            return Err(AppError::BadRequest(
-                "Feature creation only available for vector collections. Use processes API for raster/pointcloud.".to_string(),
-            ));
+            return Err(BadRequest {
+                message: "Feature creation only available for vector collections. Use processes API for raster/pointcloud.".to_string(),
+            }.build());
         }
 
         let storage_srid = self.get_storage_srid(&collection).await?;
@@ -497,9 +498,9 @@ impl FeatureService {
         let (feature, version, _) = self
             .get_feature(username, collection_id, feature_id, None)
             .await?
-            .ok_or(AppError::BadRequest(
-                "Could not find newly created feature".to_string(),
-            ))?;
+            .context(BadRequest {
+                message: "Could not find newly created feature".to_string(),
+            })?;
         Ok((feature, version))
     }
 
@@ -543,13 +544,13 @@ impl FeatureService {
             .await?;
 
         let current_version =
-            current.ok_or_else(|| AppError::NotFound("Feature not found".to_string()))?;
+            current.context(NotFound { message: "Feature not found".to_string() })?;
 
         // Check version if If-Match header was provided
         if !matches(current_version) {
-            return Err(AppError::PreconditionFailed(
-                "Feature has been modified".to_string(),
-            ));
+            return Err(PreconditionFailed {
+                message: "Feature has been modified".to_string(),
+            }.build());
         }
 
         // Build update
@@ -592,9 +593,9 @@ impl FeatureService {
         let (feature, version, _) = self
             .get_feature(username, collection_id, feature_id, None)
             .await?
-            .ok_or(AppError::BadRequest(
-                "Could not find newly updated feature".to_string(),
-            ))?;
+            .context(BadRequest {
+                message: "Could not find newly updated feature".to_string(),
+            })?;
         Ok((feature, version))
     }
 
@@ -636,13 +637,13 @@ impl FeatureService {
             .await?;
 
         let current_version =
-            current.ok_or_else(|| AppError::NotFound("Feature not found".to_string()))?;
+            current.context(NotFound { message: "Feature not found".to_string() })?;
 
         // Check version if If-Match header was provided
         if !matches(current_version) {
-            return Err(AppError::PreconditionFailed(
-                "Feature has been modified".to_string(),
-            ));
+            return Err(PreconditionFailed {
+                message: "Feature has been modified".to_string(),
+            }.build());
         }
 
         // TODO: consider datetime and assets
@@ -673,9 +674,9 @@ impl FeatureService {
         let (feature, version, _) = self
             .get_feature(username, collection_id, feature_id, None)
             .await?
-            .ok_or(AppError::BadRequest(
-                "Could not find newly updated feature".to_string(),
-            ))?;
+            .context(BadRequest {
+                message: "Could not find newly updated feature".to_string(),
+            })?;
         Ok((feature, version))
     }
 
@@ -715,13 +716,13 @@ impl FeatureService {
             .await?;
 
         let current_version =
-            current.ok_or_else(|| AppError::NotFound("Feature not found".to_string()))?;
+            current.context(NotFound { message: "Feature not found".to_string() })?;
 
         // Check version if If-Match header was provided
         if !matches(current_version) {
-            return Err(AppError::PreconditionFailed(
-                "Feature has been modified".to_string(),
-            ));
+            return Err(PreconditionFailed {
+                message: "Feature has been modified".to_string(),
+            }.build());
         }
 
         let delete_sql = format!(
@@ -771,7 +772,7 @@ impl FeatureService {
         if has_write {
             Ok(())
         } else {
-            Err(AppError::Forbidden("Write permission required".to_string()))
+            Err(Forbidden { message: "Write permission required".to_string() }.build())
         }
     }
 

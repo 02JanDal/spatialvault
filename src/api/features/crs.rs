@@ -1,5 +1,6 @@
 use crate::api::common::crs::{srid_to_uri, uri_to_srid};
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, BadRequest};
+use snafu::OptionExt;
 use axum::http::{HeaderName, HeaderValue};
 use axum_extra::headers::{Error, Header};
 
@@ -8,8 +9,9 @@ pub fn parse_crs_param(crs: Option<&str>) -> AppResult<Option<i32>> {
     match crs {
         None => Ok(None),
         Some(uri) => {
-            let srid = uri_to_srid(uri)
-                .ok_or_else(|| AppError::BadRequest(format!("Unsupported CRS: {}", uri)))?;
+            let srid = uri_to_srid(uri).context(BadRequest {
+                message: format!("Unsupported CRS: {}", uri),
+            })?;
             Ok(Some(srid))
         }
     }

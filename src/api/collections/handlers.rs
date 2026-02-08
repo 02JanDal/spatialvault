@@ -6,7 +6,7 @@ use crate::api::common::{Extent, Link, Location, crs, etag, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::db::Collection;
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, BadRequest, Forbidden};
 use crate::services::CollectionService;
 use aide::{
     axum::{ApiRouter, routing::get_with},
@@ -239,10 +239,10 @@ pub async fn create_collection(
 
     // Validate owner (user can only create in their own namespace or groups they belong to)
     if owner != user.username && !user.groups.contains(&owner) {
-        return Err(AppError::Forbidden(format!(
-            "Cannot create collection owned by {}",
-            owner
-        )));
+        return Err(Forbidden {
+            message: format!("Cannot create collection owned by {}", owner),
+        }
+        .build());
     }
 
     let collection = service
@@ -359,9 +359,10 @@ pub async fn update_collection(
             collection_id.split(':').last().unwrap_or(&collection_id)
         ))
     {
-        return Err(AppError::BadRequest(
-            "Collection ID in body does not match path".to_string(),
-        ));
+        return Err(BadRequest {
+            message: "Collection ID in body does not match path".to_string(),
+        }
+        .build());
     }
 
     let collection = service

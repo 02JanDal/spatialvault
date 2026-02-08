@@ -4,7 +4,7 @@ use crate::api::coverages::handlers::{
 };
 use crate::api::coverages::range_subset::CoverageSubsetParams;
 use crate::db::{Collection, Database};
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, BadRequest, Internal, NotFound};
 use crate::services::CollectionService;
 use std::sync::Arc;
 
@@ -27,9 +27,9 @@ impl CoverageService {
         collection: &Collection,
     ) -> AppResult<DomainSet> {
         if collection.collection_type != "raster" {
-            return Err(AppError::BadRequest(
-                "Coverages only available for raster collections".to_string(),
-            ));
+            return Err(BadRequest {
+                message: "Coverages only available for raster collections".to_string(),
+            }.build());
         }
 
         // Get actual extent from items
@@ -79,9 +79,9 @@ impl CoverageService {
         collection: &Collection,
     ) -> AppResult<RangeType> {
         if collection.collection_type != "raster" {
-            return Err(AppError::BadRequest(
-                "Coverages only available for raster collections".to_string(),
-            ));
+            return Err(BadRequest {
+                message: "Coverages only available for raster collections".to_string(),
+            }.build());
         }
 
         // Get number of items to use as hint for band count
@@ -117,9 +117,9 @@ impl CoverageService {
         _params: &CoverageSubsetParams,
     ) -> AppResult<Vec<u8>> {
         if collection.collection_type != "raster" {
-            return Err(AppError::BadRequest(
-                "Coverages only available for raster collections".to_string(),
-            ));
+            return Err(BadRequest {
+                message: "Coverages only available for raster collections".to_string(),
+            }.build());
         }
 
         // Get the primary asset for the first item in the collection
@@ -146,14 +146,14 @@ impl CoverageService {
             Some((href,)) => {
                 // For now, return a redirect hint in the error
                 // A full implementation would use GDAL to read the COG
-                Err(AppError::Internal(format!(
+                Err(Internal { message: format!(
                     "Coverage data available at: {}. Direct access requires GDAL integration.",
                     href
-                )))
+                ) }.build())
             }
-            None => Err(AppError::NotFound(
-                "No raster data available for this collection".to_string(),
-            )),
+            None => Err(NotFound {
+                message: "No raster data available for this collection".to_string(),
+            }.build()),
         }
     }
 

@@ -1,7 +1,7 @@
 use crate::api::common::{Link, SpatialExtent, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
-use crate::error::AppError;
+use crate::error::{AppError, BadRequest};
 use crate::services::{CollectionService, CoverageService};
 use aide::{
     axum::{ApiRouter, routing::get_with},
@@ -117,9 +117,10 @@ pub async fn get_coverage(
 
     // Verify this is a raster collection
     if collection.collection_type != "raster" {
-        return Err(AppError::BadRequest(
-            "Coverage endpoint only available for raster collections".to_string(),
-        ));
+        return Err(BadRequest {
+            message: "Coverage endpoint only available for raster collections".to_string(),
+        }
+        .build());
     }
 
     let base_url = &config.base_url;

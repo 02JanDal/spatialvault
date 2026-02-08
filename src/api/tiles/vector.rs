@@ -1,5 +1,5 @@
 /// Vector tile (MVT) generation utilities
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, BadRequest, NotFound};
 
 /// Common TileMatrixSet definitions
 pub mod tile_matrix_sets {
@@ -95,18 +95,18 @@ pub fn mvt_sql(
 /// Validate tile coordinates
 pub fn validate_tile_coords(z: u32, x: u32, y: u32, max_zoom: u32) -> AppResult<()> {
     if z > max_zoom {
-        return Err(AppError::BadRequest(format!(
-            "Zoom level {} exceeds maximum {}",
-            z, max_zoom
-        )));
+        return Err(BadRequest {
+            message: format!("Zoom level {} exceeds maximum {}", z, max_zoom),
+        }
+        .build());
     }
 
     let max_coord = 2_u32.pow(z);
     if x >= max_coord || y >= max_coord {
-        return Err(AppError::NotFound(format!(
-            "Tile {}/{}/{} out of bounds",
-            z, x, y
-        )));
+        return Err(NotFound {
+            message: format!("Tile {}/{}/{} out of bounds", z, x, y),
+        }
+        .build());
     }
 
     Ok(())

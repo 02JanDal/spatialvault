@@ -9,51 +9,56 @@ use axum::{
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::Serialize;
-use thiserror::Error;
+use snafu::prelude::*;
+use std::backtrace::Backtrace;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Snafu)]
+#[snafu(context(suffix(false)), visibility(pub))]
 pub enum AppError {
-    #[error("Not found: {0}")]
-    NotFound(String),
+    #[snafu(display("Not found: {message}"))]
+    NotFound { message: String, backtrace: Backtrace },
 
-    #[error("Bad request: {0}")]
-    BadRequest(String),
+    #[snafu(display("Bad request: {message}"))]
+    BadRequest { message: String, backtrace: Backtrace },
 
-    #[error("Unauthorized: {0}")]
-    Unauthorized(String),
+    #[snafu(display("Unauthorized: {message}"))]
+    Unauthorized { message: String, backtrace: Backtrace },
 
-    #[error("Forbidden: {0}")]
-    Forbidden(String),
+    #[snafu(display("Forbidden: {message}"))]
+    Forbidden { message: String, backtrace: Backtrace },
 
-    #[error("Conflict: {0}")]
-    Conflict(String),
+    #[snafu(display("Conflict: {message}"))]
+    Conflict { message: String, backtrace: Backtrace },
 
-    #[error("Precondition failed: {0}")]
-    PreconditionFailed(String),
+    #[snafu(display("Precondition failed: {message}"))]
+    PreconditionFailed { message: String, backtrace: Backtrace },
 
-    #[error("Internal server error: {0}")]
-    Internal(String),
+    #[snafu(display("Internal server error: {message}"))]
+    Internal { message: String, backtrace: Backtrace },
 
-    #[error("Database error: {0:?}")]
-    Database(#[from] sqlx::Error),
+    #[snafu(display("Database error: {source:?}"))]
+    #[snafu(context(false))]
+    Database { source: sqlx::Error, backtrace: Backtrace },
 
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
+    #[snafu(display("Serialization error: {source}"))]
+    #[snafu(context(false))]
+    Serialization { source: serde_json::Error, backtrace: Backtrace },
 
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    #[snafu(display("IO error: {source}"))]
+    #[snafu(context(false))]
+    Io { source: std::io::Error, backtrace: Backtrace },
 
-    #[error("Configuration error: {0}")]
-    Config(String),
+    #[snafu(display("Configuration error: {message}"))]
+    Config { message: String, backtrace: Backtrace },
 
-    #[error("Storage error: {0}")]
-    Storage(String),
+    #[snafu(display("Storage error: {message}"))]
+    Storage { message: String, backtrace: Backtrace },
 
-    #[error("Processing error: {0}")]
-    Processing(String),
+    #[snafu(display("Processing error: {message}"))]
+    Processing { message: String, backtrace: Backtrace },
 
-    #[error("Collection named")]
-    RenamedTo(String),
+    #[snafu(display("Collection renamed"))]
+    RenamedTo { message: String, backtrace: Backtrace },
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -65,27 +70,27 @@ pub struct ErrorResponse {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code, description) = match &self {
-            AppError::NotFound(msg) => (StatusCode::NOT_FOUND, "NotFound", msg.clone()),
-            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "BadRequest", msg.clone()),
-            AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, "Unauthorized", msg.clone()),
-            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, "Forbidden", msg.clone()),
-            AppError::Conflict(msg) => (StatusCode::CONFLICT, "Conflict", msg.clone()),
-            AppError::PreconditionFailed(msg) => (
+            AppError::NotFound { message, .. } => (StatusCode::NOT_FOUND, "NotFound", message.clone()),
+            AppError::BadRequest { message, .. } => (StatusCode::BAD_REQUEST, "BadRequest", message.clone()),
+            AppError::Unauthorized { message, .. } => (StatusCode::UNAUTHORIZED, "Unauthorized", message.clone()),
+            AppError::Forbidden { message, .. } => (StatusCode::FORBIDDEN, "Forbidden", message.clone()),
+            AppError::Conflict { message, .. } => (StatusCode::CONFLICT, "Conflict", message.clone()),
+            AppError::PreconditionFailed { message, .. } => (
                 StatusCode::PRECONDITION_FAILED,
                 "PreconditionFailed",
-                msg.clone(),
+                message.clone(),
             ),
-            AppError::Internal(msg) => {
-                tracing::error!("Internal error: {}", msg);
+            AppError::Internal { message, .. } => {
+                tracing::error!("Internal error: {}", message);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "InternalError",
                     "An internal error occurred".to_string(),
                 )
             }
-            AppError::Database(e) => {
+            AppError::Database { source, .. } => {
                 // Check for PostgreSQL permission errors (42501 = insufficient_privilege)
-                if let sqlx::Error::Database(db_err) = &e {
+                if let sqlx::Error::Database(db_err) = &source {
                     if db_err.code().as_deref() == Some("42501") {
                         tracing::info!("Database permission error: {}", db_err);
                         return (
@@ -98,59 +103,59 @@ impl IntoResponse for AppError {
                             .into_response();
                     }
                 }
-                tracing::error!("Database error: {}", e);
+                tracing::error!("Database error: {}", source);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "DatabaseError",
                     "Database error occurred".to_string(),
                 )
             }
-            AppError::Serialization(e) => {
-                tracing::error!("Serialization error: {}", e);
+            AppError::Serialization { source, .. } => {
+                tracing::error!("Serialization error: {}", source);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "SerializationError",
                     "Serialization error occurred".to_string(),
                 )
             }
-            AppError::Io(e) => {
-                tracing::error!("IO error: {}", e);
+            AppError::Io { source, .. } => {
+                tracing::error!("IO error: {}", source);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "IoError",
                     "IO error occurred".to_string(),
                 )
             }
-            AppError::Config(msg) => {
-                tracing::error!("Config error: {}", msg);
+            AppError::Config { message, .. } => {
+                tracing::error!("Config error: {}", message);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "ConfigError",
                     "Configuration error".to_string(),
                 )
             }
-            AppError::Storage(msg) => {
-                tracing::error!("Storage error: {}", msg);
+            AppError::Storage { message, .. } => {
+                tracing::error!("Storage error: {}", message);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "StorageError",
                     "A storage error occurred".to_string(),
                 )
             }
-            AppError::Processing(msg) => {
-                tracing::error!("Processing error: {}", msg);
+            AppError::Processing { message, .. } => {
+                tracing::error!("Processing error: {}", message);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "ProcessingError",
                     "A processing error occurred".to_string(),
                 )
             }
-            AppError::RenamedTo(id) => {
+            AppError::RenamedTo { message, .. } => {
                 let mut headers = HeaderMap::new();
                 // TODO: handle mounting at non-root subpath
                 headers.insert(
                     header::LOCATION,
-                    format!("/collections/{}", id).parse().unwrap(),
+                    format!("/collections/{}", message).parse().unwrap(),
                 );
                 return (StatusCode::TEMPORARY_REDIRECT, headers).into_response();
             }

@@ -4,7 +4,8 @@ use crate::api::common::Location;
 use crate::api::common::{Link, etag, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
-use crate::error::AppError;
+use crate::error::{AppError, NotFound};
+use snafu::OptionExt;
 use crate::services::FeatureService;
 use aide::{
     axum::{ApiRouter, routing::get_with},
@@ -220,11 +221,11 @@ pub async fn get_feature(
     let (feature, version, storage_srid) = service
         .get_feature(&user.username, &collection_id, feature_id, target_crs)
         .await?
-        .ok_or_else(|| {
-            AppError::NotFound(format!(
+        .context(NotFound {
+            message: format!(
                 "Feature {} not found in collection {}",
                 feature_id, collection_id
-            ))
+            ),
         })?;
 
     let base_url = &config.base_url;

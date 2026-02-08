@@ -19,7 +19,8 @@ use super::{import_pointcloud, import_raster};
 use crate::api::common::{Link, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
-use crate::error::{AppError, AppResult};
+use crate::error::{AppResult, BadRequest, Internal, NotFound};
+use snafu::OptionExt;
 use crate::services::ProcessService;
 
 /// Process summary
@@ -154,10 +155,10 @@ pub async fn get_process(
         "import-raster" => import_raster::process_description(),
         "import-pointcloud" => import_pointcloud::process_description(),
         _ => {
-            return Err(AppError::NotFound(format!(
-                "Process not found: {}",
-                process_id
-            )));
+            return NotFound {
+                message: format!("Process not found: {}", process_id),
+            }
+            .fail();
         }
     };
 
@@ -339,7 +340,9 @@ pub async fn get_job(
     let job = service
         .get_job(&user.username, job_id)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("Job not found: {}", job_id)))?;
+        .context(NotFound {
+            message: format!("Job not found: {}", job_id),
+        })?;
 
     let base_url = &config.base_url;
 
@@ -394,19 +397,21 @@ pub async fn get_job_results(
     let job = service
         .get_job(&user.username, job_id)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("Job not found: {}", job_id)))?;
+        .context(NotFound {
+            message: format!("Job not found: {}", job_id),
+        })?;
 
     // Check if job is complete
     if job.status != "successful" {
-        return Err(AppError::BadRequest(format!(
-            "Job is not complete. Status: {}",
-            job.status
-        )));
+        return BadRequest {
+            message: format!("Job is not complete. Status: {}", job.status),
+        }
+        .fail();
     }
 
-    let outputs = job
-        .outputs
-        .ok_or_else(|| AppError::Internal("Job completed but no outputs".to_string()))?;
+    let outputs = job.outputs.context(Internal {
+        message: "Job completed but no outputs".to_string(),
+    })?;
 
     Ok(Json(outputs))
 }
