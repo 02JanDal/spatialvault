@@ -2,6 +2,7 @@ use axum::http::{HeaderName, HeaderValue, header};
 use axum_extra::headers::{Error, Header};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// OGC API Link object
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -187,6 +188,52 @@ pub mod etag {
         })
     }
 }
+
+/// GeoJSON Geometry
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type")]
+pub enum GeoJsonGeometry {
+    Point {
+        coordinates: Vec<f64>,
+    },
+    MultiPoint {
+        coordinates: Vec<Vec<f64>>,
+    },
+    LineString {
+        coordinates: Vec<Vec<f64>>,
+    },
+    MultiLineString {
+        coordinates: Vec<Vec<Vec<f64>>>,
+    },
+    Polygon {
+        coordinates: Vec<Vec<Vec<f64>>>,
+    },
+    MultiPolygon {
+        coordinates: Vec<Vec<Vec<Vec<f64>>>>,
+    },
+    GeometryCollection {
+        geometries: Vec<GeoJsonGeometry>,
+    },
+}
+
+/// STAC Asset
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Asset {
+    pub href: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roles: Option<Vec<String>>,
+    #[serde(rename = "file:size", skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<i64>,
+}
+
+/// A map of asset keys to Asset objects
+pub type Assets = HashMap<String, Asset>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Location(pub String);

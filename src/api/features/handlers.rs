@@ -1,11 +1,10 @@
 use super::crs::{ContentCrs, parse_crs_param};
 use super::query::FeatureQueryParams;
 use crate::api::common::Location;
-use crate::api::common::{Link, etag, media_type, rel};
+use crate::api::common::{Assets, GeoJsonGeometry, Link, etag, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::{AppError, NotFound};
-use snafu::OptionExt;
 use crate::services::FeatureService;
 use aide::{
     axum::{ApiRouter, routing::get_with},
@@ -22,6 +21,7 @@ use axum_extra::headers::{ContentType, IfMatch};
 use axum_extra::routing::TypedPath;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use snafu::OptionExt;
 use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -32,7 +32,7 @@ pub struct Feature {
     #[serde(rename = "type")]
     pub feature_type: String,
     pub id: String,
-    pub geometry: serde_json::Value,
+    pub geometry: GeoJsonGeometry,
     pub properties: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub links: Option<Vec<Link>>,
@@ -40,7 +40,7 @@ pub struct Feature {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bbox: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub assets: Option<serde_json::Value>,
+    pub assets: Option<Assets>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collection: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,21 +70,21 @@ pub struct FeatureCollection {
 pub struct CreateFeatureRequest {
     #[serde(rename = "type")]
     pub feature_type: Option<String>,
-    pub geometry: serde_json::Value,
+    pub geometry: GeoJsonGeometry,
     pub properties: serde_json::Value,
     /// STAC item assets
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assets: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets: Option<Assets>,
 }
 
 /// Request to update a feature or STAC item (PATCH - JSON Merge Patch)
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateFeatureRequest {
-    pub geometry: Option<serde_json::Value>,
+    pub geometry: Option<GeoJsonGeometry>,
     pub properties: Option<serde_json::Value>,
     /// STAC item assets
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assets: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets: Option<Assets>,
 }
 
 /// Path parameters for collection items endpoints

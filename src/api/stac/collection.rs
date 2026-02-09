@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::api::common::{Extent, Link};
+use crate::api::common::{Assets, Extent, Link};
 
 /// STAC Collection
 #[derive(Debug, Serialize, JsonSchema)]
@@ -21,8 +21,6 @@ pub struct StacCollection {
     pub links: Vec<Link>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summaries: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assets: Option<serde_json::Value>,
 }
 
 impl StacCollection {
@@ -53,7 +51,6 @@ impl StacCollection {
                     .with_type(media_type::GEOJSON),
             ],
             summaries: None,
-            assets: None,
         }
     }
 }

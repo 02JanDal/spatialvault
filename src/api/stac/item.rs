@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::api::common::{Link, media_type, rel};
+use crate::api::common::{Assets, GeoJsonGeometry, Link, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::AppResult;
@@ -24,11 +24,11 @@ pub struct StacItem {
     pub stac_version: String,
     pub stac_extensions: Vec<String>,
     pub id: String,
-    pub geometry: serde_json::Value,
+    pub geometry: GeoJsonGeometry,
     pub bbox: Option<Vec<f64>>,
     pub properties: StacItemProperties,
     pub links: Vec<Link>,
-    pub assets: serde_json::Value,
+    pub assets: Assets,
     pub collection: String,
 }
 
@@ -76,7 +76,7 @@ pub struct StacSearchBody {
     #[serde(flatten)]
     pub params: StacSearchParams,
     /// Intersects geometry as GeoJSON object
-    pub intersects: Option<serde_json::Value>,
+    pub intersects: Option<GeoJsonGeometry>,
 }
 
 /// STAC ItemCollection (search result)

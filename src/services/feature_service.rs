@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::api::common::{Asset, Assets, GeoJsonGeometry};
 use crate::api::features::Feature;
 use crate::api::features::crs::transform_geometry_sql;
 use crate::api::features::query::Cql2Parser;
@@ -184,7 +185,7 @@ impl FeatureService {
             f64,
             f64,
             f64,
-            serde_json::Value,
+            sqlx::types::Json<GeoJsonGeometry>,
             Option<DateTime<Utc>>,
             serde_json::Value,
             i64,
@@ -213,7 +214,7 @@ impl FeatureService {
                             assets_map
                                 .get(&id)
                                 .cloned()
-                                .unwrap_or_else(|| serde_json::json!({})),
+                                .unwrap_or_default(),
                         )
                     } else {
                         None
@@ -229,7 +230,7 @@ impl FeatureService {
                     Feature {
                         feature_type: "Feature".to_string(),
                         id: id.to_string(),
-                        geometry,
+                        geometry: geometry.0,
                         properties,
                         links: None,
                         bbox: Some(vec![minx, miny, maxx, maxy]),
@@ -249,33 +250,23 @@ impl FeatureService {
         Ok((features, count, target_crs.unwrap_or(storage_srid)))
     }
 
-    /// Build a JSON object from asset fields
-    fn build_asset_json(
+    /// Build an Asset from database fields
+    fn build_asset(
         href: &str,
         media_type: Option<&str>,
         title: Option<&str>,
         description: Option<&str>,
         roles: Option<&[String]>,
         file_size: Option<i64>,
-    ) -> serde_json::Map<String, serde_json::Value> {
-        let mut asset = serde_json::Map::new();
-        asset.insert("href".to_string(), serde_json::json!(href));
-        if let Some(mt) = media_type {
-            asset.insert("type".to_string(), serde_json::json!(mt));
+    ) -> Asset {
+        Asset {
+            href: href.to_string(),
+            media_type: media_type.map(|s| s.to_string()),
+            title: title.map(|s| s.to_string()),
+            description: description.map(|s| s.to_string()),
+            roles: roles.map(|r| r.to_vec()),
+            file_size,
         }
-        if let Some(t) = title {
-            asset.insert("title".to_string(), serde_json::json!(t));
-        }
-        if let Some(d) = description {
-            asset.insert("description".to_string(), serde_json::json!(d));
-        }
-        if let Some(r) = roles {
-            asset.insert("roles".to_string(), serde_json::json!(r));
-        }
-        if let Some(size) = file_size {
-            asset.insert("file:size".to_string(), serde_json::json!(size));
-        }
-        asset
     }
 
     /// Get assets for a list of item IDs
@@ -283,7 +274,7 @@ impl FeatureService {
         &self,
         collection: &Collection,
         item_ids: &[Uuid],
-    ) -> AppResult<HashMap<Uuid, serde_json::Value>> {
+    ) -> AppResult<HashMap<Uuid, Assets>> {
         if item_ids.is_empty() {
             return Ok(HashMap::new());
         }
@@ -326,11 +317,10 @@ impl FeatureService {
         let rows = query.fetch_all(self.db.pool()).await?;
 
         // Group assets by item_id
-        let mut assets_map: HashMap<Uuid, serde_json::Map<String, serde_json::Value>> =
-            HashMap::new();
+        let mut assets_map: HashMap<Uuid, Assets> = HashMap::new();
 
         for (item_id, key, href, media_type, title, description, roles, file_size) in rows {
-            let asset = Self::build_asset_json(
+            let asset = Self::build_asset(
                 &href,
                 media_type.as_deref(),
                 title.as_deref(),
@@ -339,18 +329,10 @@ impl FeatureService {
                 file_size,
             );
 
-            assets_map
-                .entry(item_id)
-                .or_default()
-                .insert(key, serde_json::Value::Object(asset));
+            assets_map.entry(item_id).or_default().insert(key, asset);
         }
 
-        let result: HashMap<Uuid, serde_json::Value> = assets_map
-            .into_iter()
-            .map(|(id, map)| (id, serde_json::Value::Object(map)))
-            .collect();
-
-        Ok(result)
+        Ok(assets_map)
     }
 
     /// Get assets for a single item
@@ -358,12 +340,12 @@ impl FeatureService {
         &self,
         collection: &Collection,
         item_id: &Uuid,
-    ) -> AppResult<serde_json::Value> {
+    ) -> AppResult<Assets> {
         let assets_map = self.get_assets_for_items(&collection, &[*item_id]).await?;
         Ok(assets_map
             .get(item_id)
             .cloned()
-            .unwrap_or_else(|| serde_json::json!({})))
+            .unwrap_or_default())
     }
 
     pub async fn get_feature(
@@ -412,7 +394,7 @@ impl FeatureService {
 
         let row: Option<(
             Uuid,
-            serde_json::Value,
+            sqlx::types::Json<GeoJsonGeometry>,
             f64,
             f64,
             f64,
@@ -448,7 +430,7 @@ impl FeatureService {
             Feature {
                 feature_type: "Feature".to_string(),
                 id: id.to_string(),
-                geometry,
+                geometry: geometry.0,
                 properties: props,
                 links: None,
                 bbox: Some(vec![minx, miny, maxx, maxy]),
@@ -470,10 +452,10 @@ impl FeatureService {
         &self,
         username: &str,
         collection_id: &str,
-        geometry: &serde_json::Value,
+        geometry: &GeoJsonGeometry,
         properties: &serde_json::Value,
         datetime: Option<DateTime<Utc>>,
-        option: Option<serde_json::Value>,
+        _assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)> {
         let collection = self
             .collections
@@ -506,7 +488,7 @@ impl FeatureService {
         );
 
         let feature_id: Uuid = sqlx::query_scalar(&sql)
-            .bind(geometry.to_string())
+            .bind(serde_json::to_string(geometry)?)
             .bind(properties)
             .fetch_one(&mut *tx)
             .await?;
@@ -528,10 +510,10 @@ impl FeatureService {
         collection_id: &str,
         feature_id: Uuid,
         matches: Matches,
-        geometry: Option<serde_json::Value>,
+        geometry: Option<GeoJsonGeometry>,
         properties: Option<serde_json::Value>,
         datetime: Option<DateTime<Utc>>,
-        option: Option<serde_json::Value>,
+        _assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)>
     where
         Matches: FnOnce(i64) -> bool,
@@ -580,9 +562,9 @@ impl FeatureService {
         ));
         update_builder.push("version = version + 1, updated_at = NOW()");
 
-        if let Some(geom) = geometry {
+        if let Some(ref geom) = geometry {
             update_builder.push(", geometry = ST_SetSRID(ST_GeomFromGeoJSON(");
-            update_builder.push_bind(geom.to_string());
+            update_builder.push_bind(serde_json::to_string(geom)?);
             update_builder.push("), ");
             update_builder.push_bind(storage_srid);
             update_builder.push("::integer)");
@@ -623,10 +605,10 @@ impl FeatureService {
         collection_id: &str,
         feature_id: Uuid,
         matches: Matches,
-        geometry: serde_json::Value,
+        geometry: GeoJsonGeometry,
         properties: serde_json::Value,
         datetime: Option<DateTime<Utc>>,
-        option: Option<serde_json::Value>,
+        _assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)>
     where
         Matches: FnOnce(i64) -> bool,
@@ -684,7 +666,7 @@ impl FeatureService {
 
         let feature_id: Uuid = sqlx::query_scalar(&sql)
             .bind(feature_id)
-            .bind(geometry.to_string())
+            .bind(serde_json::to_string(&geometry)?)
             .bind(properties)
             .fetch_one(&mut *tx)
             .await?;

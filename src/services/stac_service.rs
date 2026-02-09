@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::api::common::{Link, media_type, rel};
+use crate::api::common::{Assets, GeoJsonGeometry, Link, media_type, rel};
 use crate::api::stac::item::{StacItem, StacItemProperties, StacSearchParams};
 use crate::auth::quote_ident;
 use crate::db::Database;
@@ -15,22 +15,6 @@ pub struct StacSearchResult {
     pub items: Vec<StacItem>,
     pub returned: u32,
     pub matched: Option<u64>,
-}
-
-/// STAC Asset representation
-#[derive(Debug, serde::Serialize)]
-pub struct StacAsset {
-    pub href: String,
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub media_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub roles: Option<Vec<String>>,
-    #[serde(rename = "file:size", skip_serializing_if = "Option::is_none")]
-    pub file_size: Option<i64>,
 }
 
 pub struct StacService {
@@ -167,7 +151,7 @@ impl StacService {
         let rows: Vec<(
             Uuid,
             String,
-            serde_json::Value,
+            sqlx::types::Json<GeoJsonGeometry>,
             f64,
             f64,
             f64,
@@ -194,7 +178,7 @@ impl StacService {
                     .get_collection(username, &collection_name)
                     .await?
                     .as_collection();
-                AppResult::<(Uuid, HashMap<Uuid, serde_json::Value>)>::Ok((
+                AppResult::<(Uuid, HashMap<Uuid, Assets>)>::Ok((
                     collection.id,
                     self.feature_service
                         .get_assets_for_items(&collection, &ids)
@@ -212,9 +196,8 @@ impl StacService {
                 |(id, collection, geometry, minx, miny, maxx, maxy, datetime, properties)| {
                     let item_assets = assets_map
                         .get(&id)
-                        .map(|m| m.get(&id).cloned())
-                        .flatten()
-                        .unwrap_or_else(|| serde_json::json!({}));
+                        .and_then(|m| m.get(&id).cloned())
+                        .unwrap_or_default();
 
                     let id_str = id.to_string();
 
@@ -223,7 +206,7 @@ impl StacService {
                         stac_version: "1.0.0".to_string(),
                         stac_extensions: vec![],
                         id: id_str.clone(),
-                        geometry,
+                        geometry: geometry.0,
                         bbox: Some(vec![minx, miny, maxx, maxy]),
                         properties: StacItemProperties {
                             datetime: datetime.map(|dt| dt.to_rfc3339()),
