@@ -22,6 +22,7 @@ use testcontainers::{
 };
 use tower::ServiceExt;
 
+use spatialvault::storage::S3Storage;
 use spatialvault::{
     api::{collections, conformance, coverages, features, landing, processes, stac, tiles},
     auth::AuthenticatedUser,
@@ -195,6 +196,7 @@ pub async fn mock_auth_middleware(
 pub struct TestApp {
     pub router: Router,
     pub db: Arc<Database>,
+    pub s3: Arc<S3Storage>,
     pub config: Arc<Config>,
     _container: Option<PostgisContainer>,
 }
@@ -231,6 +233,8 @@ impl TestApp {
             base_url: "http://localhost:8080".to_string(),
         });
 
+        let storage = Arc::new(S3Storage::new(&config.s3).unwrap());
+
         // Connect to database
         let db = Arc::new(
             Database::connect(&config.database)
@@ -263,6 +267,7 @@ impl TestApp {
             config.clone(),
             &mut openapi,
             mock_auth,
+            storage.clone(),
             collection_service,
             feature_service,
             tile_service,
@@ -274,6 +279,7 @@ impl TestApp {
         Self {
             router,
             db,
+            s3: storage,
             config,
             _container: Some(container),
         }
@@ -284,6 +290,7 @@ impl TestApp {
         config: Arc<Config>,
         openapi: &mut aide::openapi::OpenApi,
         mock_auth: MockAuthState,
+        s3: Arc<S3Storage>,
         collection_service: Arc<CollectionService>,
         feature_service: Arc<FeatureService>,
         tile_service: Arc<TileService>,
@@ -303,7 +310,11 @@ impl TestApp {
 
         // Protected routes (with mock auth)
         let protected_routes = ApiRouter::new()
-            .merge(collections::handlers::routes(collection_service.clone()))
+            .merge(collections::handlers::routes(
+                s3.clone(),
+                collection_service.clone(),
+                process_service.clone(),
+            ))
             .merge(collections::sharing::routes(collection_service.clone()))
             .merge(features::handlers::routes(feature_service))
             .merge(tiles::handlers::routes(
@@ -465,6 +476,7 @@ impl TestApp {
             self.config.clone(),
             &mut openapi,
             mock_auth,
+            self.s3.clone(),
             collection_service,
             feature_service,
             tile_service,
@@ -476,6 +488,7 @@ impl TestApp {
         TestApp {
             router,
             db: self.db.clone(),
+            s3: self.s3.clone(),
             config: self.config.clone(),
             _container: None, // Don't own the container
         }

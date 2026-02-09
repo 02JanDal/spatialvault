@@ -2,12 +2,15 @@ use super::schemas::{
     CollectionResponse, CollectionSchema, CollectionsResponse, CreateCollectionRequest,
     ListCollectionsParams, UpdateCollectionRequest,
 };
+use crate::api::collections::CreateCollection;
 use crate::api::common::{Extent, Link, Location, crs, etag, media_type, rel};
+use crate::api::processes::import_vector::ImportVectorInputs;
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::db::Collection;
 use crate::error::{AppError, AppResult, BadRequest, Forbidden};
-use crate::services::CollectionService;
+use crate::services::{CollectionService, ProcessService};
+use crate::storage::S3Storage;
 use aide::{
     axum::{ApiRouter, routing::get_with},
     transform::TransformOperation,
@@ -21,8 +24,14 @@ use axum::{
 use axum_extra::headers::{ETag, IfMatch};
 use axum_extra::routing::TypedPath;
 use axum_extra::{TypedHeader, headers};
+use geozero::mvt::process;
+use std::io::Read;
 use std::sync::Arc;
 use std::time::SystemTime;
+use uuid::Uuid;
+
+// Type alias for the shared state tuple
+type AppState = (Arc<S3Storage>, Arc<CollectionService>, Arc<ProcessService>);
 
 /// Build the list of CRSes supported for retrieving features from a collection
 /// Always includes WGS84, and adds storage CRS if it's different from WGS84
@@ -121,7 +130,7 @@ fn build_collection_response(
 pub async fn list_collections(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<CollectionService>>,
+    State((_storage, service, _process_service)): State<AppState>,
     Query(params): Query<ListCollectionsParams>,
 ) -> AppResult<Json<CollectionsResponse>> {
     let collections = service
@@ -175,7 +184,7 @@ pub struct CollectionPath {
 pub async fn get_collection(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<CollectionService>>,
+    State((_storage, service, _process_service)): State<AppState>,
     path: CollectionPath,
 ) -> Result<Response, AppError> {
     let collection = service
@@ -219,22 +228,27 @@ fn get_collection_docs(op: TransformOperation) -> TransformOperation {
 pub async fn create_collection(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<CollectionService>>,
-    Json(request): Json<CreateCollectionRequest>,
+    State((storage, service, process_service)): State<AppState>,
+    request: CreateCollectionRequest,
 ) -> AppResult<(
     StatusCode,
     TypedHeader<ETag>,
     TypedHeader<Location>,
     Json<CollectionResponse>,
 )> {
+    let (metadata, file) = match request {
+        CreateCollectionRequest::Json(data) => (data, None),
+        CreateCollectionRequest::Multipart { metadata, file } => (metadata, Some(file)),
+    };
+
     // Determine owner (default to current user)
-    let owner = request.owner.unwrap_or_else(|| user.username.clone());
+    let owner = metadata.owner.unwrap_or_else(|| user.username.clone());
 
     // Determine canonical name (prepend owner if not already prefixed)
-    let canonical_name = if request.id.starts_with(&format!("{}:", owner)) {
-        request.id.clone()
+    let canonical_name = if metadata.id.starts_with(&format!("{}:", owner)) {
+        metadata.id.clone()
     } else {
-        format!("{}:{}", owner, request.id)
+        format!("{}:{}", owner, metadata.id)
     };
 
     // Validate owner (user can only create in their own namespace or groups they belong to)
@@ -250,12 +264,28 @@ pub async fn create_collection(
             &user.username,
             &canonical_name,
             &owner,
-            &request.title,
-            request.description.as_deref(),
-            &request.collection_type,
-            request.crs,
+            &metadata.title,
+            metadata.description.as_deref(),
+            &metadata.collection_type,
+            metadata.crs,
         )
         .await?;
+
+    if let Some(file) = file {
+        let key = format!("{}-{}", Uuid::new_v4(), file.filename);
+        storage.put(&key, file.data).await?;
+        process_service
+            .create_job(
+                &user.username,
+                "import-vector",
+                &serde_json::to_value(ImportVectorInputs {
+                    collection_id: collection.id.to_string(),
+                    file_key: key,
+                })
+                .unwrap(),
+            )
+            .await?;
+    }
 
     let base_url = &config.base_url;
 
@@ -264,9 +294,9 @@ pub async fn create_collection(
     let response = build_collection_response(
         &collection,
         base_url,
-        None,        // extent not computed for create response
-        request.crs, // storage_crs from request
-        true,        // include all links for consistency
+        None,         // extent not computed for create response
+        metadata.crs, // storage_crs from request
+        true,         // include all links for consistency
     );
 
     let location_value = format!("{}/collections/{}", base_url, &collection.canonical_name);
@@ -279,6 +309,7 @@ pub async fn create_collection(
     ))
 }
 
+/// Create a collection with file import (multipart/form-data)
 fn create_collection_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create collection")
         .description("Creates a new collection owned by the authenticated user")
@@ -294,7 +325,7 @@ fn create_collection_docs(op: TransformOperation) -> TransformOperation {
 pub async fn patch_collection(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<CollectionService>>,
+    State((_storage, service, _process_service)): State<AppState>,
     path: CollectionPath,
     if_match: Option<TypedHeader<IfMatch>>,
     Json(request): Json<UpdateCollectionRequest>,
@@ -344,10 +375,10 @@ fn patch_collection_docs(op: TransformOperation) -> TransformOperation {
 pub async fn update_collection(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<CollectionService>>,
+    State((_storage, service, _process_service)): State<AppState>,
     path: CollectionPath,
     if_match: Option<TypedHeader<IfMatch>>,
-    Json(request): Json<CreateCollectionRequest>,
+    Json(request): Json<CreateCollection>,
 ) -> AppResult<(StatusCode, TypedHeader<ETag>, Json<CollectionResponse>)> {
     let collection_id = path.collection_id;
 
@@ -407,7 +438,7 @@ fn update_collection_docs(op: TransformOperation) -> TransformOperation {
 
 pub async fn delete_collection(
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<CollectionService>>,
+    State((_storage, service, _process_service)): State<AppState>,
     path: CollectionPath,
     if_match: Option<TypedHeader<IfMatch>>,
 ) -> AppResult<StatusCode> {
@@ -438,7 +469,7 @@ pub struct CollectionSchemaPath {
 
 pub async fn get_collection_schema(
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<CollectionService>>,
+    State((_storage, service, _process_service)): State<AppState>,
     path: CollectionSchemaPath,
 ) -> Result<Response, AppError> {
     let schema = service
@@ -455,7 +486,11 @@ fn get_collection_schema_docs(op: TransformOperation) -> TransformOperation {
         .response_with::<200, Json<CollectionSchema>, _>(|res| res.description("Collection schema"))
 }
 
-pub fn routes(service: Arc<CollectionService>) -> ApiRouter {
+pub fn routes(
+    storage: Arc<S3Storage>,
+    service: Arc<CollectionService>,
+    process_service: Arc<ProcessService>,
+) -> ApiRouter {
     ApiRouter::new()
         .api_route(
             "/collections",
@@ -473,5 +508,5 @@ pub fn routes(service: Arc<CollectionService>) -> ApiRouter {
             CollectionSchemaPath::PATH,
             get_with(get_collection_schema, get_collection_schema_docs),
         )
-        .with_state(service)
+        .with_state((storage, service, process_service))
 }

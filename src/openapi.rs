@@ -1,3 +1,10 @@
+use crate::api::collections::CreateCollection;
+use crate::api::collections::schemas::{
+    CollectionResponse, CollectionsResponse, CreateCollectionRequest, UpdateCollectionRequest,
+};
+use crate::api::common::{Extent, Link};
+use crate::api::features::handlers::{Feature, FeatureCollection};
+use crate::config::Config;
 use aide::{
     axum::{ApiRouter, routing::get_with},
     openapi::{
@@ -10,13 +17,6 @@ use axum::{Extension, Json};
 use indexmap::IndexMap;
 use schemars::schema_for;
 use std::sync::Arc;
-
-use crate::api::collections::schemas::{
-    CollectionResponse, CollectionsResponse, CreateCollectionRequest, UpdateCollectionRequest,
-};
-use crate::api::common::{Extent, Link};
-use crate::api::features::handlers::{Feature, FeatureCollection};
-use crate::config::Config;
 
 /// Create the base OpenAPI specification with metadata
 pub fn create_openapi(config: &Config) -> OpenApi {
@@ -34,8 +34,8 @@ pub fn create_openapi(config: &Config) -> OpenApi {
         schemars_to_openapi_schema::<CollectionsResponse>(),
     );
     schemas.insert(
-        "CreateCollectionRequest".to_string(),
-        schemars_to_openapi_schema::<CreateCollectionRequest>(),
+        "CreateCollection".to_string(),
+        schemars_to_openapi_schema::<CreateCollection>(),
     );
     schemas.insert(
         "UpdateCollectionRequest".to_string(),

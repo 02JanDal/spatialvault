@@ -99,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
         let app = build_router(
             config.clone(),
             auth_state,
+            storage,
             collection_service,
             feature_service,
             tile_service,
@@ -121,6 +122,7 @@ async fn main() -> anyhow::Result<()> {
 fn build_router(
     config: Arc<Config>,
     auth_state: AuthState,
+    storage: Arc<S3Storage>,
     collection_service: Arc<CollectionService>,
     feature_service: Arc<FeatureService>,
     tile_service: Arc<TileService>,
@@ -140,7 +142,11 @@ fn build_router(
 
     // Protected routes (auth required)
     let protected_routes = ApiRouter::new()
-        .merge(collections::handlers::routes(collection_service.clone()))
+        .merge(collections::handlers::routes(
+            storage,
+            collection_service.clone(),
+            process_service.clone(),
+        ))
         .merge(collections::sharing::routes(collection_service.clone()))
         .merge(features::handlers::routes(feature_service))
         .merge(tiles::handlers::routes(

@@ -104,6 +104,7 @@ impl JobWorker {
                 self.process_import_pointcloud(job_id, &owner, &inputs)
                     .await
             }
+            "import-vector" => self.process_import_vector(job_id, &owner, &inputs).await,
             _ => Processing { message: format!(
                 "Unknown process: {}",
                 process_id
@@ -596,5 +597,146 @@ impl JobWorker {
                 Ok((wkt, 4326))
             }
         }
+    }
+
+    /// Process import-vector job: import features from vector file to collection
+    async fn process_import_vector(
+        &self,
+        job_id: Uuid,
+        owner: &str,
+        inputs: &serde_json::Value,
+    ) -> AppResult<serde_json::Value> {
+        use crate::api::processes::import_vector::ImportVectorInputs;
+        use crate::processing::vector::VectorImporter;
+
+        let inputs: ImportVectorInputs = serde_json::from_value(inputs.clone())?;
+
+        // 1. Download file from S3 to temp (progress: 10%)
+        self.process_service
+            .update_job_status(job_id, "running", Some("Downloading file"), Some(10))
+            .await?;
+
+        let file_path = self.download_file(
+            &format!("s3://{}", inputs.file_key),
+            job_id,
+        ).await?;
+
+        // 2. Open with GDAL (progress: 15%)
+        self.process_service
+            .update_job_status(job_id, "running", Some("Opening vector file"), Some(15))
+            .await?;
+
+        let mut importer = VectorImporter::open(&file_path)?;
+        let source_crs = importer.get_source_crs()?;
+        let total_features = importer.feature_count()?;
+
+        tracing::info!(
+            "Importing {} features from {} (EPSG:{})",
+            total_features,
+            file_path.display(),
+            source_crs
+        );
+
+        // 3. Get collection and storage CRS (progress: 20%)
+        self.process_service
+            .update_job_status(job_id, "running", Some("Loading collection"), Some(20))
+            .await?;
+
+        let collection_with_crs = self
+            .collection_service
+            .get_collection(owner, &inputs.collection_id)
+            .await?;
+
+        let collection = collection_with_crs.as_collection();
+        let storage_crs = collection_with_crs.storage_crs;
+
+        // 4. Import features in batches (progress: 20-90%)
+        let batch_size = 1000;
+        let mut imported = 0;
+        let mut failed = 0;
+
+        loop {
+            let batch = importer.read_features_batch(batch_size)?;
+            if batch.is_empty() {
+                break;
+            }
+
+            // Begin transaction for batch
+            let mut tx = self.db.pool().begin().await?;
+
+            for feature in batch {
+                match self.insert_feature(&mut tx, &collection, &feature, source_crs, storage_crs).await {
+                    Ok(_) => imported += 1,
+                    Err(e) => {
+                        failed += 1;
+                        tracing::warn!("Failed to import feature: {}", e);
+                    }
+                }
+            }
+
+            // Commit batch
+            tx.commit().await?;
+
+            // Update progress
+            let progress = 20 + ((imported as f64 / total_features as f64) * 70.0) as i32;
+            self.process_service
+                .update_job_status(
+                    job_id,
+                    "running",
+                    Some(&format!("Imported {}/{} features", imported, total_features)),
+                    Some(progress),
+                )
+                .await?;
+        }
+
+        // 5. Cleanup temp file (progress: 95%)
+        tokio::fs::remove_file(&file_path).await.ok();
+
+        // 6. Return outputs (progress: 100%)
+        Ok(serde_json::json!({
+            "collection": inputs.collection_id,
+            "features_imported": imported,
+            "features_failed": failed,
+            "source_crs": format!("EPSG:{}", source_crs),
+            "target_crs": format!("EPSG:{}", storage_crs),
+        }))
+    }
+
+    /// Insert a single feature into the collection
+    async fn insert_feature(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        collection: &Collection,
+        feature: &crate::processing::vector::VectorFeature,
+        source_crs: i32,
+        storage_crs: i32,
+    ) -> AppResult<()> {
+        // Build the SQL query to insert feature
+        // Use ST_Transform if CRS differs, otherwise just ST_GeomFromText
+        let transform_fn = if source_crs == storage_crs {
+            format!("ST_GeomFromText($1, {})", storage_crs)
+        } else {
+            format!("ST_Transform(ST_GeomFromText($1, {}), {})", source_crs, storage_crs)
+        };
+
+        let query = format!(
+            "INSERT INTO {}.{} (geometry, properties) VALUES ({}, $2)",
+            self.quote_ident(&collection.schema_name),
+            self.quote_ident(&collection.table_name),
+            transform_fn
+        );
+
+        sqlx::query(&query)
+            .bind(&feature.geometry_wkt)
+            .bind(&feature.properties)
+            .execute(&mut **tx)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Quote a PostgreSQL identifier (schema or table name)
+    fn quote_ident(&self, ident: &str) -> String {
+        format!("\"{}\"", ident.replace('"', "\"\""))
     }
 }

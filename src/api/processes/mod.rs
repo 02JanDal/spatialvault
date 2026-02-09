@@ -1,6 +1,7 @@
 pub mod handlers;
 pub mod import_pointcloud;
 pub mod import_raster;
+pub mod import_vector;
 
 pub use handlers::*;
 

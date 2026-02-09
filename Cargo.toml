@@ -9,7 +9,7 @@ default = []
 
 [dependencies]
 # Web framework
-axum = { version = "0.8", features = ["macros"] }
+axum = { version = "0.8", features = ["macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["typed-header", "typed-routing"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
@@ -64,6 +64,7 @@ futures = "0.3"
 async-trait = "0.1"
 indexmap = "2.13.0"
 itertools = "0.14.0"
+tempfile = "3.15"
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }
