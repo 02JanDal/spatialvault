@@ -455,7 +455,7 @@ impl FeatureService {
         geometry: &GeoJsonGeometry,
         properties: &serde_json::Value,
         datetime: Option<DateTime<Utc>>,
-        _assets: Option<Assets>,
+        assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)> {
         let collection = self
             .collections
@@ -471,10 +471,14 @@ impl FeatureService {
 
         let storage_srid = self.get_storage_srid(&collection).await?;
 
+        if assets.as_ref().is_some_and(|a| !a.is_empty()) {
+            self.collections.ensure_assets_table(&collection).await?;
+        }
+
         // Execute as the user to enforce PostgreSQL permissions
         let mut tx = self.db.begin_as(username).await?;
 
-        // TODO: consider datetime and assets
+        // TODO: consider datetime
 
         let sql = format!(
             r#"
@@ -492,6 +496,17 @@ impl FeatureService {
             .bind(properties)
             .fetch_one(&mut *tx)
             .await?;
+
+        if let Some(ref assets) = assets {
+            Self::insert_assets(
+                &mut tx,
+                &collection.schema_name,
+                &collection.table_name,
+                feature_id,
+                assets,
+            )
+            .await?;
+        }
 
         tx.commit().await?;
 
@@ -513,7 +528,7 @@ impl FeatureService {
         geometry: Option<GeoJsonGeometry>,
         properties: Option<serde_json::Value>,
         datetime: Option<DateTime<Utc>>,
-        _assets: Option<Assets>,
+        assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)>
     where
         Matches: FnOnce(i64) -> bool,
@@ -529,6 +544,10 @@ impl FeatureService {
         let storage_srid = self.get_storage_srid(&collection).await?;
         let quoted_schema = quote_ident(&collection.schema_name);
         let quoted_table = quote_ident(&collection.table_name);
+
+        if assets.as_ref().is_some_and(|a| !a.is_empty()) {
+            self.collections.ensure_assets_table(&collection).await?;
+        }
 
         // Execute as the user to enforce PostgreSQL permissions
         let mut tx = self.db.begin_as(username).await?;
@@ -576,7 +595,6 @@ impl FeatureService {
             update_builder.push_bind(props);
         }
 
-        // TODO: sync assets in database if present
         // TODO: handle datetime
 
         update_builder.push(" WHERE id = ");
@@ -587,6 +605,17 @@ impl FeatureService {
             .build_query_scalar()
             .fetch_one(&mut *tx)
             .await?;
+
+        if let Some(ref assets) = assets {
+            Self::upsert_assets(
+                &mut tx,
+                &collection.schema_name,
+                &collection.table_name,
+                feature_id,
+                assets,
+            )
+            .await?;
+        }
 
         tx.commit().await?;
 
@@ -608,7 +637,7 @@ impl FeatureService {
         geometry: GeoJsonGeometry,
         properties: serde_json::Value,
         datetime: Option<DateTime<Utc>>,
-        _assets: Option<Assets>,
+        assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)>
     where
         Matches: FnOnce(i64) -> bool,
@@ -619,6 +648,10 @@ impl FeatureService {
             .await?
             .as_collection();
         let storage_srid = self.get_storage_srid(&collection).await?;
+
+        if assets.as_ref().is_some_and(|a| !a.is_empty()) {
+            self.collections.ensure_assets_table(&collection).await?;
+        }
 
         // Execute as the user to enforce PostgreSQL permissions
         let mut tx = self.db.begin_as(username).await?;
@@ -648,7 +681,7 @@ impl FeatureService {
             .build());
         }
 
-        // TODO: consider datetime and assets
+        // TODO: consider datetime
 
         let sql = format!(
             r#"
@@ -670,6 +703,26 @@ impl FeatureService {
             .bind(properties)
             .fetch_one(&mut *tx)
             .await?;
+
+        if let Some(ref assets) = assets {
+            let keep_keys: Vec<&str> = assets.keys().map(|k| k.as_str()).collect();
+            Self::delete_stale_assets(
+                &mut tx,
+                &collection.schema_name,
+                &collection.table_name,
+                feature_id,
+                &keep_keys,
+            )
+            .await?;
+            Self::upsert_assets(
+                &mut tx,
+                &collection.schema_name,
+                &collection.table_name,
+                feature_id,
+                assets,
+            )
+            .await?;
+        }
 
         tx.commit().await?;
 
@@ -781,6 +834,116 @@ impl FeatureService {
             }
             .build())
         }
+    }
+
+    /// Insert asset rows for a feature.
+    async fn insert_assets(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        schema_name: &str,
+        table_name: &str,
+        item_id: Uuid,
+        assets: &Assets,
+    ) -> AppResult<()> {
+        if assets.is_empty() {
+            return Ok(());
+        }
+        let quoted_schema = quote_ident(schema_name);
+        let quoted_assets_table = quote_ident(&format!("_{}_assets", table_name));
+        for (key, asset) in assets {
+            let sql = format!(
+                r#"
+                INSERT INTO {quoted_schema}.{quoted_assets_table}
+                    (item_id, key, href, type, title, description, roles, file_size)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                "#,
+            );
+            sqlx::query(&sql)
+                .bind(item_id)
+                .bind(key)
+                .bind(&asset.href)
+                .bind(asset.media_type.as_deref())
+                .bind(asset.title.as_deref())
+                .bind(asset.description.as_deref())
+                .bind(asset.roles.as_deref())
+                .bind(asset.file_size)
+                .execute(&mut **tx)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Upsert asset rows for a feature (PATCH merge semantics).
+    async fn upsert_assets(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        schema_name: &str,
+        table_name: &str,
+        item_id: Uuid,
+        assets: &Assets,
+    ) -> AppResult<()> {
+        if assets.is_empty() {
+            return Ok(());
+        }
+        let quoted_schema = quote_ident(schema_name);
+        let quoted_assets_table = quote_ident(&format!("_{}_assets", table_name));
+        for (key, asset) in assets {
+            let sql = format!(
+                r#"
+                INSERT INTO {quoted_schema}.{quoted_assets_table}
+                    (item_id, key, href, type, title, description, roles, file_size)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (item_id, key) DO UPDATE SET
+                    href = EXCLUDED.href,
+                    type = EXCLUDED.type,
+                    title = EXCLUDED.title,
+                    description = EXCLUDED.description,
+                    roles = EXCLUDED.roles,
+                    file_size = EXCLUDED.file_size
+                "#,
+            );
+            sqlx::query(&sql)
+                .bind(item_id)
+                .bind(key)
+                .bind(&asset.href)
+                .bind(asset.media_type.as_deref())
+                .bind(asset.title.as_deref())
+                .bind(asset.description.as_deref())
+                .bind(asset.roles.as_deref())
+                .bind(asset.file_size)
+                .execute(&mut **tx)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Delete asset rows whose keys are not in `keep_keys`.
+    async fn delete_stale_assets(
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        schema_name: &str,
+        table_name: &str,
+        item_id: Uuid,
+        keep_keys: &[&str],
+    ) -> AppResult<()> {
+        let quoted_schema = quote_ident(schema_name);
+        let quoted_assets_table = quote_ident(&format!("_{}_assets", table_name));
+        if keep_keys.is_empty() {
+            let sql = format!(
+                "DELETE FROM {quoted_schema}.{quoted_assets_table} WHERE item_id = $1"
+            );
+            sqlx::query(&sql).bind(item_id).execute(&mut **tx).await?;
+        } else {
+            let mut builder = QueryBuilder::<Postgres>::new(format!(
+                "DELETE FROM {quoted_schema}.{quoted_assets_table} WHERE item_id = "
+            ));
+            builder.push_bind(item_id);
+            builder.push(" AND key NOT IN (");
+            let mut separated = builder.separated(", ");
+            for key in keep_keys {
+                separated.push_bind(*key);
+            }
+            separated.push_unseparated(")");
+            builder.build().execute(&mut **tx).await?;
+        }
+        Ok(())
     }
 
     async fn get_storage_srid(&self, collection: &Collection) -> AppResult<i32> {

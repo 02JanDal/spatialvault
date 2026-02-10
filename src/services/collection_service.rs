@@ -9,6 +9,20 @@ use crate::db::{Collection, CollectionWithCrs, Database};
 use crate::error::{AppError, AppResult, BadRequest, Forbidden, NotFound, PreconditionFailed, RenamedTo};
 use snafu::OptionExt;
 
+fn create_assets_table_sql(schema_name: &str, table_name: &str) -> String {
+    let quoted_schema = quote_ident(schema_name);
+    let quoted_table = quote_ident(table_name);
+    let quoted_assets_table = quote_ident(&format!("_{}_assets", table_name));
+    format!(
+        r#"
+        CREATE TABLE IF NOT EXISTS {quoted_schema}.{quoted_assets_table} (
+            item_id UUID NOT NULL REFERENCES {quoted_schema}.{quoted_table}(id) ON DELETE CASCADE,
+            PRIMARY KEY (item_id, key)
+        ) INHERITS (spatialvault.assets_base)
+        "#,
+    )
+}
+
 pub struct CollectionService {
     db: Arc<Database>,
 }
@@ -277,16 +291,7 @@ impl CollectionService {
             );
             sqlx::query(&add_datetime_sql).execute(&mut *tx).await?;
 
-            let quoted_assets_table = quote_ident(&format!("_{}_assets", table_name));
-            let create_assets_sql = format!(
-                r#"
-                    CREATE TABLE {}.{} (
-                        item_id UUID NOT NULL REFERENCES {}.{}(id) ON DELETE CASCADE,
-                        PRIMARY KEY (item_id, key)
-                    ) INHERITS (spatialvault.assets_base)
-                "#,
-                quoted_schema, quoted_assets_table, quoted_schema, quoted_table
-            );
+            let create_assets_sql = create_assets_table_sql(schema_name, &table_name);
             sqlx::query(&create_assets_sql).execute(&mut *tx).await?;
         }
 
@@ -551,6 +556,27 @@ impl CollectionService {
         .fetch_one(self.db.pool())
         .await?;
         Ok(value.unwrap_or(false))
+    }
+
+    /// Create the assets table for a collection if it doesn't already exist.
+    /// Uses the service-role pool so it works even when the caller's transaction
+    /// runs as a non-schema-owner, and sets table ownership so the collection
+    /// owner can INSERT/DELETE in their user-role transaction.
+    pub async fn ensure_assets_table(&self, collection: &Collection) -> AppResult<()> {
+        let sql = create_assets_table_sql(&collection.schema_name, &collection.table_name);
+        sqlx::query(&sql).execute(self.db.pool()).await?;
+
+        let alter_owner_sql = format!(
+            "ALTER TABLE {}.{} OWNER TO {}",
+            quote_ident(&collection.schema_name),
+            quote_ident(&format!("_{}_assets", collection.table_name)),
+            quote_ident(&collection.owner),
+        );
+        sqlx::query(&alter_owner_sql)
+            .execute(self.db.pool())
+            .await?;
+
+        Ok(())
     }
 
     pub async fn get_collection_extent(
