@@ -143,12 +143,12 @@ fn build_router(
     // Protected routes (auth required)
     let protected_routes = ApiRouter::new()
         .merge(collections::handlers::routes(
-            storage,
+            storage.clone(),
             collection_service.clone(),
             process_service.clone(),
         ))
         .merge(collections::sharing::routes(collection_service.clone()))
-        .merge(features::handlers::routes(feature_service))
+        .merge(features::handlers::routes(storage, feature_service))
         .merge(tiles::handlers::routes(
             tile_service,
             collection_service.clone(),

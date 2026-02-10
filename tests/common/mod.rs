@@ -316,7 +316,7 @@ impl TestApp {
                 process_service.clone(),
             ))
             .merge(collections::sharing::routes(collection_service.clone()))
-            .merge(features::handlers::routes(feature_service))
+            .merge(features::handlers::routes(s3.clone(), feature_service))
             .merge(tiles::handlers::routes(
                 tile_service,
                 collection_service.clone(),

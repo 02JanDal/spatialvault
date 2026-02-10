@@ -2,15 +2,15 @@ use aide::OperationInput;
 use aide::generate::GenContext;
 use aide::openapi::{MediaType, RequestBody, SchemaObject};
 use axum::Json;
-use axum::extract::{FromRequest, Multipart, Request};
+use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
-use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
-use bytes::Bytes;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 
-use crate::api::common::{Extent, Link};
+use crate::api::common::{
+    Extent, Link, UploadedFile, is_json, is_multipart, parse_multipart_with_files,
+};
 
 /// OGC API Collection response
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -62,13 +62,6 @@ pub struct CreateCollection {
 }
 
 #[derive(Debug)]
-pub struct UploadedFile {
-    pub filename: String,
-    pub content_type: String,
-    pub data: Bytes,
-}
-
-#[derive(Debug)]
 pub enum CreateCollectionRequest {
     Json(CreateCollection),
     Multipart {
@@ -84,72 +77,26 @@ where
     type Rejection = axum::response::Response;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let content_type = req
-            .headers()
-            .get(CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
+        if is_multipart(&req) {
+            let (metadata, mut files) =
+                parse_multipart_with_files::<S, CreateCollection>(req, state, "metadata").await?;
 
-        if content_type.starts_with("multipart/form-data") {
-            let mut multipart = Multipart::from_request(req, state)
-                .await
-                .map_err(|e| e.into_response())?;
+            let file = files.remove("file").ok_or_else(|| {
+                axum::response::Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Missing 'file' field".into())
+                    .unwrap()
+            })?;
 
-            let mut metadata: Option<CreateCollection> = None;
-            let mut file: Option<UploadedFile> = None;
-
-            while let Some(field) = multipart
-                .next_field()
-                .await
-                .map_err(|e| e.into_response())?
-            {
-                match field.name() {
-                    Some("metadata") => {
-                        let bytes = field.bytes().await.map_err(|e| e.into_response())?;
-                        metadata = Some(serde_json::from_slice(&bytes).map_err(|e| {
-                            axum::response::Response::builder()
-                                .status(StatusCode::BAD_REQUEST)
-                                .body(format!("Invalid metadata JSON: {}", e).into())
-                                .unwrap()
-                        })?);
-                    }
-                    Some("file") => {
-                        let filename = field.file_name().unwrap_or("file").to_string();
-                        let content_type = field
-                            .content_type()
-                            .unwrap_or("application/octet-stream")
-                            .to_string();
-                        let data = field.bytes().await.map_err(|e| e.into_response())?;
-                        file = Some(UploadedFile {
-                            filename,
-                            content_type,
-                            data,
-                        });
-                    }
-                    _ => {
-                        return Err(axum::response::Response::builder()
-                            .status(StatusCode::BAD_REQUEST)
-                            .body("Unexpected form field".into())
-                            .unwrap());
-                    }
-                }
+            if !files.is_empty() {
+                return Err(axum::response::Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body("Unexpected form fields".into())
+                    .unwrap());
             }
 
-            let metadata = metadata.ok_or_else(|| {
-                axum::response::Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body("Missing metadata field".into())
-                    .unwrap()
-            })?;
-            let file = file.ok_or_else(|| {
-                axum::response::Response::builder()
-                    .status(StatusCode::BAD_REQUEST)
-                    .body("Missing file field".into())
-                    .unwrap()
-            })?;
-
             Ok(CreateCollectionRequest::Multipart { metadata, file })
-        } else if content_type.starts_with("application/json") {
+        } else if is_json(&req) {
             let metadata = Json::<CreateCollection>::from_request(req, state)
                 .await
                 .map_err(|e| e.into_response())?

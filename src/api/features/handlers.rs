@@ -1,11 +1,13 @@
 use super::crs::{ContentCrs, parse_crs_param};
 use super::query::FeatureQueryParams;
+use super::schemas::{CreateFeaturePayload, UpdateFeaturePayload, resolve_asset_uploads};
 use crate::api::common::Location;
 use crate::api::common::{Assets, GeoJsonGeometry, Link, etag, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::{AppError, NotFound};
 use crate::services::FeatureService;
+use crate::storage::S3Storage;
 use aide::{
     axum::{ApiRouter, routing::get_with},
     transform::TransformOperation,
@@ -22,9 +24,12 @@ use axum_extra::routing::TypedPath;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use snafu::OptionExt;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
+
+type FeatureState = (Arc<S3Storage>, Arc<FeatureService>);
 
 /// GeoJSON Feature (also serves as STAC Item for raster/pointcloud collections)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -98,7 +103,7 @@ pub struct CollectionItemsPath {
 pub async fn list_features(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<FeatureService>>,
+    State((_storage, service)): State<FeatureState>,
     path: CollectionItemsPath,
     Query(params): Query<FeatureQueryParams>,
 ) -> Result<Response, AppError> {
@@ -210,7 +215,7 @@ pub struct FeaturePath {
 pub async fn get_feature(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<FeatureService>>,
+    State((_storage, service)): State<FeatureState>,
     path: FeaturePath,
     Query(params): Query<FeatureQueryParams>,
 ) -> Result<Response, AppError> {
@@ -268,11 +273,17 @@ fn get_feature_docs(op: TransformOperation) -> TransformOperation {
 pub async fn create_feature(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<FeatureService>>,
+    State((storage, service)): State<FeatureState>,
     path: CollectionItemsPath,
-    Json(request): Json<CreateFeatureRequest>,
+    payload: CreateFeaturePayload,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
+
+    let (mut request, files) = match payload {
+        CreateFeaturePayload::Json(r) => (r, HashMap::new()),
+        CreateFeaturePayload::Multipart { item, files } => (item, files),
+    };
+    resolve_asset_uploads(&mut request.assets, files, &storage).await?;
 
     // Extract datetime from properties if present
     let datetime = request
@@ -322,14 +333,20 @@ fn create_feature_docs(op: TransformOperation) -> TransformOperation {
 
 pub async fn update_feature(
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<FeatureService>>,
+    State((storage, service)): State<FeatureState>,
     path: FeaturePath,
     if_match: Option<TypedHeader<IfMatch>>,
-    Json(request): Json<UpdateFeatureRequest>,
+    payload: UpdateFeaturePayload,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
 
     let feature_id = path.feature_id;
+
+    let (mut request, files) = match payload {
+        UpdateFeaturePayload::Json(r) => (r, HashMap::new()),
+        UpdateFeaturePayload::Multipart { item, files } => (item, files),
+    };
+    resolve_asset_uploads(&mut request.assets, files, &storage).await?;
 
     // Extract datetime from properties if present
     let datetime = request
@@ -369,13 +386,19 @@ fn update_feature_docs(op: TransformOperation) -> TransformOperation {
 
 pub async fn replace_feature(
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<FeatureService>>,
+    State((storage, service)): State<FeatureState>,
     path: FeaturePath,
     if_match: Option<TypedHeader<IfMatch>>,
-    Json(request): Json<CreateFeatureRequest>,
+    payload: CreateFeaturePayload,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     let feature_id = path.feature_id;
+
+    let (mut request, files) = match payload {
+        CreateFeaturePayload::Json(r) => (r, HashMap::new()),
+        CreateFeaturePayload::Multipart { item, files } => (item, files),
+    };
+    resolve_asset_uploads(&mut request.assets, files, &storage).await?;
 
     // Extract datetime from properties if present
     let datetime = request
@@ -414,7 +437,7 @@ fn replace_feature_docs(op: TransformOperation) -> TransformOperation {
 
 pub async fn delete_feature(
     Extension(user): Extension<AuthenticatedUser>,
-    State(service): State<Arc<FeatureService>>,
+    State((_storage, service)): State<FeatureState>,
     path: FeaturePath,
     if_match: Option<TypedHeader<IfMatch>>,
 ) -> Result<Response, AppError> {
@@ -439,7 +462,7 @@ fn delete_feature_docs(op: TransformOperation) -> TransformOperation {
         .response_with::<412, (), _>(|res| res.description("Precondition failed (ETag mismatch)"))
 }
 
-pub fn routes(service: Arc<FeatureService>) -> ApiRouter {
+pub fn routes(storage: Arc<S3Storage>, service: Arc<FeatureService>) -> ApiRouter {
     ApiRouter::new()
         .api_route(
             CollectionItemsPath::PATH,
@@ -453,5 +476,5 @@ pub fn routes(service: Arc<FeatureService>) -> ApiRouter {
                 .patch_with(update_feature, update_feature_docs)
                 .delete_with(delete_feature, delete_feature_docs),
         )
-        .with_state(service)
+        .with_state((storage, service))
 }

@@ -1,4 +1,8 @@
-use axum::http::{HeaderName, HeaderValue, header};
+use axum::extract::{FromRequest, Multipart, Request};
+use axum::http::header::CONTENT_TYPE;
+use axum::http::{HeaderName, HeaderValue, StatusCode, header};
+use axum::response::IntoResponse;
+use bytes::Bytes;
 use axum_extra::headers::{Error, Header};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -234,6 +238,96 @@ pub struct Asset {
 
 /// A map of asset keys to Asset objects
 pub type Assets = HashMap<String, Asset>;
+
+/// An uploaded file from a multipart request
+#[derive(Debug)]
+pub struct UploadedFile {
+    pub filename: String,
+    pub content_type: String,
+    pub data: Bytes,
+}
+
+/// Parse a multipart request into a deserialized JSON field and a map of uploaded files.
+///
+/// One field named `json_field_name` is deserialized as `T`; all other fields are
+/// collected as `UploadedFile` entries keyed by their field name.
+pub async fn parse_multipart_with_files<S, T>(
+    req: Request,
+    state: &S,
+    json_field_name: &str,
+) -> Result<(T, HashMap<String, UploadedFile>), axum::response::Response>
+where
+    S: Send + Sync,
+    T: serde::de::DeserializeOwned,
+{
+    let mut multipart = Multipart::from_request(req, state)
+        .await
+        .map_err(|e| e.into_response())?;
+
+    let mut json_value: Option<T> = None;
+    let mut files: HashMap<String, UploadedFile> = HashMap::new();
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| e.into_response())?
+    {
+        let name = field.name().unwrap_or("").to_string();
+        if name == json_field_name {
+            let bytes = field.bytes().await.map_err(|e| e.into_response())?;
+            json_value = Some(serde_json::from_slice(&bytes).map_err(|e| {
+                axum::response::Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(format!("Invalid {} JSON: {}", json_field_name, e).into())
+                    .unwrap()
+            })?);
+        } else {
+            let filename = field.file_name().unwrap_or(&name).to_string();
+            let content_type = field
+                .content_type()
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            let data = field.bytes().await.map_err(|e| e.into_response())?;
+            files.insert(
+                name,
+                UploadedFile {
+                    filename,
+                    content_type,
+                    data,
+                },
+            );
+        }
+    }
+
+    let json_value = json_value.ok_or_else(|| {
+        axum::response::Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(format!("Missing '{}' field", json_field_name).into())
+            .unwrap()
+    })?;
+
+    Ok((json_value, files))
+}
+
+/// Check if a request's Content-Type is multipart/form-data
+pub fn is_multipart(req: &Request) -> bool {
+    req.headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .starts_with("multipart/form-data")
+}
+
+/// Check if a request's Content-Type is JSON-like
+/// (application/json, application/merge-patch+json, etc.)
+pub fn is_json(req: &Request) -> bool {
+    let ct = req
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/json");
+    ct.contains("json")
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Location(pub String);
