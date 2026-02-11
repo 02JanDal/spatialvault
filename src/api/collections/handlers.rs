@@ -24,8 +24,6 @@ use axum::{
 use axum_extra::headers::{ETag, IfMatch};
 use axum_extra::routing::TypedPath;
 use axum_extra::{TypedHeader, headers};
-use geozero::mvt::process;
-use std::io::Read;
 use std::sync::Arc;
 use std::time::SystemTime;
 use uuid::Uuid;
@@ -268,10 +266,43 @@ pub async fn create_collection(
             metadata.description.as_deref(),
             &metadata.collection_type,
             metadata.crs,
+            metadata.columns.as_deref(),
         )
         .await?;
 
     if let Some(file) = file {
+        // Auto-detect columns from the uploaded file if none were specified
+        if metadata.columns.is_none() {
+            let file_data = file.data.clone();
+            let filename = file.filename.clone();
+            let detected_columns = tokio::task::spawn_blocking(move || {
+                use crate::processing::vector::VectorImporter;
+
+                let temp_path = std::env::temp_dir().join(format!("detect_{}", filename));
+                let result = (|| {
+                    std::fs::write(&temp_path, &file_data).ok()?;
+                    let importer = VectorImporter::open(&temp_path).ok()?;
+                    let cols = importer.get_field_definitions().ok()?;
+                    if cols.is_empty() { None } else { Some(cols) }
+                })();
+                std::fs::remove_file(&temp_path).ok();
+                result
+            }).await.ok().flatten();
+
+            if let Some(cols) = detected_columns {
+                let _ = service.update_collection(
+                    &user.username,
+                    &collection.canonical_name,
+                    |_| true,
+                    None,
+                    None,
+                    None,
+                    Some(&cols),
+                    None,
+                ).await;
+            }
+        }
+
         let key = format!("{}-{}", Uuid::new_v4(), file.filename);
         storage.put(&key, file.data).await?;
         process_service
@@ -340,6 +371,8 @@ pub async fn patch_collection(
             request.title.as_deref(),
             request.description.as_deref(),
             request.id.as_deref(),
+            request.add_columns.as_deref(),
+            request.remove_columns.as_deref(),
         )
         .await?;
 
@@ -403,6 +436,7 @@ pub async fn update_collection(
             |version| etag::matches(version, if_match.clone()),
             &request.title,
             request.description.as_deref(),
+            request.columns.as_deref(),
         )
         .await?;
 

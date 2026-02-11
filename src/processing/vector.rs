@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::api::collections::schemas::{ColumnDef, ColumnType};
 use crate::error::{AppResult, BadRequest, Processing};
 use gdal::vector::LayerAccess;
 
@@ -91,6 +92,38 @@ impl VectorImporter {
         }
 
         Ok(features)
+    }
+
+    /// Get column definitions by inspecting the layer's field definitions
+    pub fn get_field_definitions(&self) -> AppResult<Vec<ColumnDef>> {
+        let defn = self.layer.defn();
+        let mut columns = Vec::new();
+
+        for field in defn.fields() {
+            let name = field.name();
+            let col_type = match field.field_type() {
+                gdal::vector::OGRFieldType::OFTInteger | gdal::vector::OGRFieldType::OFTInteger64 => ColumnType::Integer,
+                gdal::vector::OGRFieldType::OFTReal => ColumnType::Real,
+                gdal::vector::OGRFieldType::OFTString => ColumnType::String,
+                gdal::vector::OGRFieldType::OFTDate => ColumnType::Date,
+                gdal::vector::OGRFieldType::OFTDateTime => ColumnType::Datetime,
+                _ => ColumnType::String, // Fallback to string for unsupported types
+            };
+
+            // Skip names that conflict with system columns
+            if name.starts_with('_') || name == "geometry" {
+                continue;
+            }
+
+            columns.push(ColumnDef {
+                name,
+                column_type: col_type,
+                nullable: true,
+                default: None,
+            });
+        }
+
+        Ok(columns)
     }
 
     /// Get a list of supported vector formats

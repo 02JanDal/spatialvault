@@ -439,6 +439,7 @@ impl JobWorker {
                 None,
                 collection_type,
                 4326, // Default to WGS84
+                None, // No columns for auto-created collections
             )
             .await
     }
@@ -719,18 +720,38 @@ impl JobWorker {
             format!("ST_Transform(ST_GeomFromText($1, {}), {})", source_crs, storage_crs)
         };
 
-        let query = format!(
-            "INSERT INTO {}.{} (geometry, properties) VALUES ({}, $2)",
-            self.quote_ident(&collection.schema_name),
-            self.quote_ident(&collection.table_name),
-            transform_fn
-        );
+        let quoted_schema = self.quote_ident(&collection.schema_name);
+        let quoted_table = self.quote_ident(&collection.table_name);
 
-        sqlx::query(&query)
-            .bind(&feature.geometry_wkt)
-            .bind(&feature.properties)
-            .execute(&mut **tx)
-            .await?;
+        // Get user columns to determine insert strategy
+        let user_columns = self.collection_service.get_user_columns(collection).await?;
+
+        if user_columns.is_empty() {
+            let query = format!(
+                "INSERT INTO {quoted_schema}.{quoted_table} (geometry) VALUES ({transform_fn})",
+            );
+            sqlx::query(&query)
+                .bind(&feature.geometry_wkt)
+                .execute(&mut **tx)
+                .await?;
+        } else {
+            // Use jsonb_populate_record to decompose properties into columns
+            let col_names: Vec<String> = user_columns.iter().map(|c| self.quote_ident(&c.name)).collect();
+            let col_refs: Vec<String> = user_columns.iter().map(|c| format!("r.{}", self.quote_ident(&c.name))).collect();
+
+            let query = format!(
+                "INSERT INTO {quoted_schema}.{quoted_table} (geometry, {cols}) \
+                 SELECT {transform_fn}, {col_refs} \
+                 FROM jsonb_populate_record(NULL::{quoted_schema}.{quoted_table}, $2) r",
+                cols = col_names.join(", "),
+                col_refs = col_refs.join(", "),
+            );
+            sqlx::query(&query)
+                .bind(&feature.geometry_wkt)
+                .bind(&feature.properties)
+                .execute(&mut **tx)
+                .await?;
+        }
 
         Ok(())
     }

@@ -503,16 +503,18 @@ impl Cql2Parser {
     /// Convert property name to SQL
     fn property_to_sql(property: &str, prefix: &str) -> String {
         if property.contains('.') {
-            // Nested property access via JSONB
             let parts: Vec<&str> = property.split('.').collect();
             if parts[0] == "properties" {
-                // Access into properties JSONB column
-                format!("{}properties->>'{}'", prefix, parts[1..].join("'->>"))
+                // properties.name -> just reference the column directly
+                format!("{}\"{}\"", prefix, parts[1])
             } else {
                 format!("{}\"{}\"", prefix, parts[0])
             }
         } else if property == "geometry" {
             format!("{}geometry", prefix)
+        } else if property == "datetime" {
+            // Map datetime to _datetime column
+            format!("{}_datetime", prefix)
         } else {
             // Column reference
             format!("{}\"{}\"", prefix, property)

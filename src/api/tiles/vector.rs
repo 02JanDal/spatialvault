@@ -1,5 +1,6 @@
 /// Vector tile (MVT) generation utilities
 use crate::error::{AppResult, BadRequest, NotFound};
+use crate::services::collection_service::SYSTEM_COLUMNS;
 
 /// Common TileMatrixSet definitions
 pub mod tile_matrix_sets {
@@ -58,6 +59,12 @@ pub fn mvt_sql(
         format!("ST_Transform({}, 3857)", geometry_column)
     };
 
+    // Build system column exclusions for reconstructing properties from real columns
+    let system_exclusions = SYSTEM_COLUMNS.iter()
+        .map(|c| format!("- '{}'", c))
+        .collect::<Vec<_>>()
+        .join(" ");
+
     format!(
         r#"
         WITH bounds AS (
@@ -72,7 +79,7 @@ pub fn mvt_sql(
                     256,
                     true
                 ) AS geom,
-                t.properties
+                (to_jsonb(t.*) {system_exclusions}) AS properties
             FROM "{schema}"."{table}" t, bounds
             WHERE ST_Intersects(
                 {geom_transform},
@@ -87,6 +94,7 @@ pub fn mvt_sql(
         maxx = maxx,
         maxy = maxy,
         geom_transform = geom_transform,
+        system_exclusions = system_exclusions,
         schema = schema,
         table = table
     )

@@ -669,13 +669,21 @@ impl TestResponse {
 
 /// Create a test collection request
 pub fn test_collection_request(id: &str, collection_type: &str) -> serde_json::Value {
-    serde_json::json!({
+    let mut req = serde_json::json!({
         "id": id,
         "title": format!("Test Collection {}", id),
         "description": "A test collection",
         "collectionType": collection_type,
-        "crs": 4326
-    })
+        "crs": 4326,
+    });
+    // Only include columns for vector collections
+    if collection_type == "vector" {
+        req["columns"] = serde_json::json!([
+            {"name": "name", "type": "string"},
+            {"name": "value", "type": "integer"}
+        ]);
+    }
+    req
 }
 
 /// Create a test feature request

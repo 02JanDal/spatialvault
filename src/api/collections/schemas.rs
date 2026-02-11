@@ -12,6 +12,34 @@ use crate::api::common::{
     Extent, Link, UploadedFile, is_json, is_multipart, parse_multipart_with_files,
 };
 
+/// Supported column types for collection properties
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ColumnType {
+    String,
+    Integer,
+    Real,
+    Date,
+    Datetime,
+    Boolean,
+}
+
+/// Column definition for collection properties
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ColumnDef {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub column_type: ColumnType,
+    #[serde(default = "default_true")]
+    pub nullable: bool,
+    #[serde(default)]
+    pub default: Option<serde_json::Value>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// OGC API Collection response
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +87,9 @@ pub struct CreateCollection {
     /// CRS for the collection (EPSG code). Default: 4326
     #[serde(default = "default_crs")]
     pub crs: i32,
+    /// Column definitions for feature properties
+    #[serde(default)]
+    pub columns: Option<Vec<ColumnDef>>,
 }
 
 #[derive(Debug)]
@@ -179,6 +210,12 @@ pub struct UpdateCollectionRequest {
     /// New canonical name for rename/move (creates alias from old name)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
+    /// Columns to add to the collection
+    #[serde(default)]
+    pub add_columns: Option<Vec<ColumnDef>>,
+    /// Column names to remove from the collection
+    #[serde(default)]
+    pub remove_columns: Option<Vec<String>>,
 }
 
 /// Collection schema (OGC API Schemas)

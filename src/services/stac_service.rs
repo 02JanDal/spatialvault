@@ -79,7 +79,7 @@ impl StacService {
                 .iter()
                 .map(|s| format!("'{}'", s.replace('\'', "''")))
                 .collect();
-            where_clauses.push(format!("i.id::text IN ({})", quoted.join(", ")));
+            where_clauses.push(format!("i._id::text IN ({})", quoted.join(", ")));
         }
 
         // Filter by bbox
@@ -102,14 +102,14 @@ impl StacService {
                 let parts: Vec<&str> = datetime.split('/').collect();
                 if parts.len() == 2 {
                     if parts[0] != ".." {
-                        where_clauses.push(format!("i.datetime >= '{}'", parts[0]));
+                        where_clauses.push(format!("i._datetime >= '{}'", parts[0]));
                     }
                     if parts[1] != ".." {
-                        where_clauses.push(format!("i.datetime <= '{}'", parts[1]));
+                        where_clauses.push(format!("i._datetime <= '{}'", parts[1]));
                     }
                 }
             } else {
-                where_clauses.push(format!("i.datetime = '{}'", datetime));
+                where_clauses.push(format!("i._datetime = '{}'", datetime));
             }
         }
 
@@ -118,9 +118,15 @@ impl StacService {
         // Count query
         let count_sql = tables
             .iter()
-            .map(|(_, table)| format!("SELECT COUNT(*) FROM {} WHERE {}", table, where_clause))
+            .map(|(_, table)| format!("SELECT COUNT(*) FROM {table} i WHERE {where_clause}"))
             .join(" UNION ALL ");
         let count: (i64,) = sqlx::query_as(&count_sql).fetch_one(self.db.pool()).await?;
+
+        // Build the system columns exclusion list for to_jsonb
+        let system_exclusions = crate::services::collection_service::SYSTEM_COLUMNS.iter()
+            .map(|c| format!("- '{}'", c))
+            .collect::<Vec<_>>()
+            .join(" ");
 
         // Data query - get items
         let sql = tables
@@ -129,21 +135,21 @@ impl StacService {
                 format!(
                     r#"
             SELECT
-                id,
-                '{}' as collection_name,
-                ST_AsGeoJSON(geometry)::jsonb as geometry,
-                ST_XMin(geometry) as minx,
-                ST_YMin(geometry) as miny,
-                ST_XMax(geometry) as maxx,
-                ST_YMax(geometry) as maxy,
-                datetime,
-                properties
-            FROM {}
-            WHERE {}
-            ORDER BY i.datetime DESC NULLS LAST
-            LIMIT {} OFFSET 0
+                i._id,
+                '{collection}' as collection_name,
+                ST_AsGeoJSON(i.geometry)::jsonb as geometry,
+                ST_XMin(i.geometry) as minx,
+                ST_YMin(i.geometry) as miny,
+                ST_XMax(i.geometry) as maxx,
+                ST_YMax(i.geometry) as maxy,
+                i._datetime,
+                (to_jsonb(i.*) {system_exclusions}) as properties
+            FROM {table} i
+            WHERE {where_clause}
+            ORDER BY i._datetime DESC NULLS LAST
+            LIMIT {limit} OFFSET 0
             "#,
-                    collection, table, where_clause, params.limit
+                    limit = params.limit
                 )
             })
             .join(" UNION ALL ");

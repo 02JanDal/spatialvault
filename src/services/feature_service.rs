@@ -11,6 +11,7 @@ use crate::auth::quote_ident;
 use crate::db::{Collection, Database};
 use crate::error::{AppResult, BadRequest, Forbidden, NotFound, PreconditionFailed};
 use crate::services::CollectionService;
+use crate::services::collection_service::SYSTEM_COLUMNS;
 use snafu::OptionExt;
 use sqlx::{Postgres, QueryBuilder};
 
@@ -42,7 +43,6 @@ impl FeatureService {
             .await?
             .as_collection();
         let storage_srid = self.get_storage_srid(&collection).await?;
-        let geometry_expr = transform_geometry_sql("geometry", storage_srid, target_crs);
 
         let has_datetime = self.collections.has_datetime(&collection).await?;
         let has_assets = self.collections.has_assets(&collection).await?;
@@ -134,10 +134,15 @@ impl FeatureService {
         let quoted_schema = quote_ident(&collection.schema_name);
         let quoted_table = quote_ident(&collection.table_name);
 
+        // Build the system columns exclusion list for to_jsonb
+        let system_exclusions = SYSTEM_COLUMNS.iter()
+            .map(|c| format!("- '{}'", c))
+            .collect::<Vec<_>>()
+            .join(" ");
+
         // Count query
         let mut count_builder = QueryBuilder::<Postgres>::new(format!(
-            "SELECT COUNT(*) FROM {}.{} WHERE ",
-            quoted_schema, quoted_table
+            "SELECT COUNT(*) FROM {quoted_schema}.{quoted_table} t WHERE ",
         ));
         push_where_clauses(&mut count_builder, &where_clauses);
         let count: i64 = count_builder
@@ -146,35 +151,32 @@ impl FeatureService {
             .await?;
 
         let datetime_column = if has_datetime {
-            "datetime"
+            "t._datetime"
         } else {
             "NULL AS datetime"
         };
 
-        // Data query
+        // Data query - reconstruct properties from real columns
         let mut data_builder = QueryBuilder::<Postgres>::new(format!(
             r#"
             SELECT
-                id,
-                ST_XMin(geometry) as minx,
-                ST_YMin(geometry) as miny,
-                ST_XMax(geometry) as maxx,
-                ST_YMax(geometry) as maxy,
+                t._id,
+                ST_XMin(t.geometry) as minx,
+                ST_YMin(t.geometry) as miny,
+                ST_XMax(t.geometry) as maxx,
+                ST_YMax(t.geometry) as maxy,
                 ST_AsGeoJSON({geometry_expr})::jsonb as geometry,
                 {datetime_column},
-                properties,
-                version
-            FROM {quoted_schema}.{quoted_table}
+                (to_jsonb(t.*) {system_exclusions}) as properties,
+                t._version
+            FROM {quoted_schema}.{quoted_table} t
             WHERE
             "#,
-            geometry_expr = geometry_expr,
-            datetime_column = datetime_column,
-            quoted_schema = quoted_schema,
-            quoted_table = quoted_table
+            geometry_expr = transform_geometry_sql("t.geometry", storage_srid, target_crs),
         ));
         push_where_clauses(&mut data_builder, &where_clauses);
         data_builder
-            .push(" ORDER BY created_at DESC LIMIT ")
+            .push(" ORDER BY t._created_at DESC LIMIT ")
             .push_bind(limit as i64)
             .push(" OFFSET ")
             .push_bind(offset as i64);
@@ -361,35 +363,39 @@ impl FeatureService {
             .await?
             .as_collection();
         let storage_srid = self.get_storage_srid(&collection).await?;
-        let geometry_expr = transform_geometry_sql("geometry", storage_srid, target_crs);
 
         let has_datetime = self.collections.has_datetime(&collection).await?;
         let has_assets = self.collections.has_assets(&collection).await?;
 
         let datetime_column = if has_datetime {
-            "datetime"
+            "t._datetime"
         } else {
             "NULL AS datetime"
         };
 
+        let system_exclusions = SYSTEM_COLUMNS.iter()
+            .map(|c| format!("- '{}'", c))
+            .collect::<Vec<_>>()
+            .join(" ");
+
         let sql = format!(
             r#"
             SELECT
-                id,
+                t._id,
                 ST_AsGeoJSON({geometry_expr})::jsonb as geometry,
-                ST_XMin(geometry) as minx,
-                ST_YMin(geometry) as miny,
-                ST_XMax(geometry) as maxx,
-                ST_YMax(geometry) as maxy,
-                {},
-                properties,
-                version
-            FROM {}.{}
-            WHERE id = $1
+                ST_XMin(t.geometry) as minx,
+                ST_YMin(t.geometry) as miny,
+                ST_XMax(t.geometry) as maxx,
+                ST_YMax(t.geometry) as maxy,
+                {datetime_column},
+                (to_jsonb(t.*) {system_exclusions}) as properties,
+                t._version
+            FROM {quoted_schema}.{quoted_table} t
+            WHERE t._id = $1
         "#,
-            datetime_column,
-            quote_ident(&collection.schema_name),
-            quote_ident(&collection.table_name),
+            geometry_expr = transform_geometry_sql("t.geometry", storage_srid, target_crs),
+            quoted_schema = quote_ident(&collection.schema_name),
+            quoted_table = quote_ident(&collection.table_name),
         );
 
         let row: Option<(
@@ -454,7 +460,7 @@ impl FeatureService {
         collection_id: &str,
         geometry: &GeoJsonGeometry,
         properties: &serde_json::Value,
-        datetime: Option<DateTime<Utc>>,
+        _datetime: Option<DateTime<Utc>>,
         assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)> {
         let collection = self
@@ -478,24 +484,68 @@ impl FeatureService {
         // Execute as the user to enforce PostgreSQL permissions
         let mut tx = self.db.begin_as(username).await?;
 
-        // TODO: consider datetime
+        let quoted_schema = quote_ident(&collection.schema_name);
+        let quoted_table = quote_ident(&collection.table_name);
 
-        let sql = format!(
-            r#"
-            INSERT INTO {}.{} (geometry, properties)
-            VALUES (ST_SetSRID(ST_GeomFromGeoJSON($1), {}), $2)
-            RETURNING id
-            "#,
-            quote_ident(&collection.schema_name),
-            quote_ident(&collection.table_name),
-            storage_srid
-        );
+        // Get user columns and validate properties
+        let user_columns = self.collections.get_user_columns(&collection).await?;
+        if let serde_json::Value::Object(map) = properties {
+            for key in map.keys() {
+                if key == "datetime" {
+                    continue; // datetime handled separately
+                }
+                if key == "geometry" {
+                    return Err(BadRequest {
+                        message: "'geometry' is not allowed as a property name".to_string(),
+                    }.build());
+                }
+                if !user_columns.iter().any(|c| c.name == *key) {
+                    return Err(BadRequest {
+                        message: format!("Unknown property '{}'. Define it as a column on the collection first.", key),
+                    }.build());
+                }
+            }
+        }
 
-        let feature_id: Uuid = sqlx::query_scalar(&sql)
-            .bind(serde_json::to_string(geometry)?)
-            .bind(properties)
-            .fetch_one(&mut *tx)
-            .await?;
+        // Strip datetime from properties for the record
+        let mut props_for_record = properties.clone();
+        if let serde_json::Value::Object(map) = &mut props_for_record {
+            map.remove("datetime");
+        }
+
+        let feature_id: Uuid = if user_columns.is_empty() {
+            let sql = format!(
+                r#"
+                INSERT INTO {quoted_schema}.{quoted_table} (geometry)
+                VALUES (ST_SetSRID(ST_GeomFromGeoJSON($1), {storage_srid}))
+                RETURNING _id
+                "#,
+            );
+            sqlx::query_scalar(&sql)
+                .bind(serde_json::to_string(geometry)?)
+                .fetch_one(&mut *tx)
+                .await?
+        } else {
+            // Use jsonb_populate_record to decompose properties into columns
+            let col_names: Vec<String> = user_columns.iter().map(|c| quote_ident(&c.name)).collect();
+            let col_refs: Vec<String> = user_columns.iter().map(|c| format!("r.{}", quote_ident(&c.name))).collect();
+
+            let sql = format!(
+                r#"
+                INSERT INTO {quoted_schema}.{quoted_table} (geometry, {cols})
+                SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), {storage_srid}), {col_refs}
+                FROM jsonb_populate_record(NULL::{quoted_schema}.{quoted_table}, $2) r
+                RETURNING _id
+                "#,
+                cols = col_names.join(", "),
+                col_refs = col_refs.join(", "),
+            );
+            sqlx::query_scalar(&sql)
+                .bind(serde_json::to_string(geometry)?)
+                .bind(&props_for_record)
+                .fetch_one(&mut *tx)
+                .await?
+        };
 
         if let Some(ref assets) = assets {
             Self::insert_assets(
@@ -527,7 +577,7 @@ impl FeatureService {
         matches: Matches,
         geometry: Option<GeoJsonGeometry>,
         properties: Option<serde_json::Value>,
-        datetime: Option<DateTime<Utc>>,
+        _datetime: Option<DateTime<Utc>>,
         assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)>
     where
@@ -549,12 +599,15 @@ impl FeatureService {
             self.collections.ensure_assets_table(&collection).await?;
         }
 
+        // Get user columns for validation
+        let user_columns = self.collections.get_user_columns(&collection).await?;
+
         // Execute as the user to enforce PostgreSQL permissions
         let mut tx = self.db.begin_as(username).await?;
 
         // Lock and check version
         let check_sql = format!(
-            r#"SELECT version FROM {}.{} WHERE id = $1 FOR UPDATE"#,
+            r#"SELECT _version FROM {}.{} WHERE _id = $1 FOR UPDATE"#,
             quoted_schema, quoted_table
         );
         let current: Option<i64> = sqlx::query_scalar(&check_sql)
@@ -574,37 +627,101 @@ impl FeatureService {
             .build());
         }
 
-        // Build update
-        let mut update_builder = QueryBuilder::<Postgres>::new(format!(
-            "UPDATE {}.{} SET ",
-            quoted_schema, quoted_table
-        ));
-        update_builder.push("version = version + 1, updated_at = NOW()");
-
-        if let Some(ref geom) = geometry {
-            update_builder.push(", geometry = ST_SetSRID(ST_GeomFromGeoJSON(");
-            update_builder.push_bind(serde_json::to_string(geom)?);
-            update_builder.push("), ");
-            update_builder.push_bind(storage_srid);
-            update_builder.push("::integer)");
-        }
-
+        // Validate and strip properties
+        let mut props_for_record = serde_json::Value::Null;
         if let Some(props) = properties {
-            // Merge properties using JSON concatenation
-            update_builder.push(", properties = COALESCE(properties, '{}'::jsonb) || ");
-            update_builder.push_bind(props);
+            if let serde_json::Value::Object(ref map) = props {
+                for key in map.keys() {
+                    if key == "datetime" {
+                        continue;
+                    }
+                    if key == "geometry" {
+                        return Err(BadRequest {
+                            message: "'geometry' is not allowed as a property name".to_string(),
+                        }.build());
+                    }
+                    if !user_columns.iter().any(|c| c.name == *key) {
+                        return Err(BadRequest {
+                            message: format!("Unknown property '{}'. Define it as a column on the collection first.", key),
+                        }.build());
+                    }
+                }
+            }
+            let mut stripped = props.clone();
+            if let serde_json::Value::Object(ref mut map) = stripped {
+                map.remove("datetime");
+            }
+            props_for_record = stripped;
         }
 
-        // TODO: handle datetime
+        let has_props = !props_for_record.is_null() && !user_columns.is_empty();
 
-        update_builder.push(" WHERE id = ");
-        update_builder.push_bind(feature_id);
-        update_builder.push(" RETURNING id");
+        // Build update SQL with per-column CASE for PATCH semantics
+        if has_props {
+            let col_sets: Vec<String> = user_columns.iter().map(|c| {
+                let qn = quote_ident(&c.name);
+                format!("{qn} = CASE WHEN $2 ? '{name}' THEN r.{qn} ELSE t.{qn} END", name = c.name)
+            }).collect();
 
-        let feature_id: Uuid = update_builder
-            .build_query_scalar()
-            .fetch_one(&mut *tx)
-            .await?;
+            let mut sql = format!(
+                "UPDATE {quoted_schema}.{quoted_table} t SET _version = t._version + 1, _updated_at = NOW()"
+            );
+
+            sql.push_str(&format!(", {}", col_sets.join(", ")));
+
+            if geometry.is_some() {
+                sql.push_str(&format!(
+                    ", geometry = ST_SetSRID(ST_GeomFromGeoJSON($3), {})",
+                    storage_srid
+                ));
+                sql.push_str(&format!(
+                    " FROM jsonb_populate_record(NULL::{quoted_schema}.{quoted_table}, $2) r WHERE t._id = $1 RETURNING t._id"
+                ));
+
+                let geom_str = serde_json::to_string(geometry.as_ref().unwrap())?;
+                let feature_id_result: Uuid = sqlx::query_scalar(&sql)
+                    .bind(feature_id)
+                    .bind(&props_for_record)
+                    .bind(&geom_str)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                // feature_id is reassigned below
+                let _ = feature_id_result;
+            } else {
+                sql.push_str(&format!(
+                    " FROM jsonb_populate_record(NULL::{quoted_schema}.{quoted_table}, $2) r WHERE t._id = $1 RETURNING t._id"
+                ));
+
+                let _: Uuid = sqlx::query_scalar(&sql)
+                    .bind(feature_id)
+                    .bind(&props_for_record)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            }
+        } else {
+            // No user columns to update, just geometry and system fields
+            let mut update_builder = QueryBuilder::<Postgres>::new(format!(
+                "UPDATE {quoted_schema}.{quoted_table} SET "
+            ));
+            update_builder.push("_version = _version + 1, _updated_at = NOW()");
+
+            if let Some(ref geom) = geometry {
+                update_builder.push(", geometry = ST_SetSRID(ST_GeomFromGeoJSON(");
+                update_builder.push_bind(serde_json::to_string(geom)?);
+                update_builder.push("), ");
+                update_builder.push_bind(storage_srid);
+                update_builder.push("::integer)");
+            }
+
+            update_builder.push(" WHERE _id = ");
+            update_builder.push_bind(feature_id);
+            update_builder.push(" RETURNING _id");
+
+            let _: Uuid = update_builder
+                .build_query_scalar()
+                .fetch_one(&mut *tx)
+                .await?;
+        }
 
         if let Some(ref assets) = assets {
             Self::upsert_assets(
@@ -636,7 +753,7 @@ impl FeatureService {
         matches: Matches,
         geometry: GeoJsonGeometry,
         properties: serde_json::Value,
-        datetime: Option<DateTime<Utc>>,
+        _datetime: Option<DateTime<Utc>>,
         assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)>
     where
@@ -659,9 +776,12 @@ impl FeatureService {
         let quoted_schema = quote_ident(&collection.schema_name);
         let quoted_table = quote_ident(&collection.table_name);
 
+        // Get user columns and validate properties
+        let user_columns = self.collections.get_user_columns(&collection).await?;
+
         // Check version
         let check_sql = format!(
-            r#"SELECT version FROM {}.{} WHERE id = $1 FOR UPDATE"#,
+            r#"SELECT _version FROM {}.{} WHERE _id = $1 FOR UPDATE"#,
             quoted_schema, quoted_table
         );
         let current: Option<i64> = sqlx::query_scalar(&check_sql)
@@ -681,28 +801,75 @@ impl FeatureService {
             .build());
         }
 
-        // TODO: consider datetime
+        // Validate properties
+        if let serde_json::Value::Object(ref map) = properties {
+            for key in map.keys() {
+                if key == "datetime" {
+                    continue;
+                }
+                if key == "geometry" {
+                    return Err(BadRequest {
+                        message: "'geometry' is not allowed as a property name".to_string(),
+                    }.build());
+                }
+                if !user_columns.iter().any(|c| c.name == *key) {
+                    return Err(BadRequest {
+                        message: format!("Unknown property '{}'. Define it as a column on the collection first.", key),
+                    }.build());
+                }
+            }
+        }
 
-        let sql = format!(
-            r#"
-            UPDATE {}.{}
-            SET
-                geometry = ST_SetSRID(ST_GeomFromGeoJSON($2), {}),
-                properties = $3,
-                version = version + 1,
-                updated_at = NOW()
-            WHERE id = $1
-            RETURNING id
-            "#,
-            quoted_schema, quoted_table, storage_srid
-        );
+        let mut props_for_record = properties.clone();
+        if let serde_json::Value::Object(ref mut map) = props_for_record {
+            map.remove("datetime");
+        }
 
-        let feature_id: Uuid = sqlx::query_scalar(&sql)
-            .bind(feature_id)
-            .bind(serde_json::to_string(&geometry)?)
-            .bind(properties)
-            .fetch_one(&mut *tx)
-            .await?;
+        if user_columns.is_empty() {
+            let sql = format!(
+                r#"
+                UPDATE {quoted_schema}.{quoted_table}
+                SET
+                    geometry = ST_SetSRID(ST_GeomFromGeoJSON($2), {storage_srid}),
+                    _version = _version + 1,
+                    _updated_at = NOW()
+                WHERE _id = $1
+                RETURNING _id
+                "#,
+            );
+            let _: Uuid = sqlx::query_scalar(&sql)
+                .bind(feature_id)
+                .bind(serde_json::to_string(&geometry)?)
+                .fetch_one(&mut *tx)
+                .await?;
+        } else {
+            // PUT semantics: all user columns get the value from the record (NULL if missing)
+            let col_sets: Vec<String> = user_columns.iter().map(|c| {
+                let qn = quote_ident(&c.name);
+                format!("{qn} = r.{qn}")
+            }).collect();
+
+            let sql = format!(
+                r#"
+                UPDATE {quoted_schema}.{quoted_table} t
+                SET
+                    geometry = ST_SetSRID(ST_GeomFromGeoJSON($2), {storage_srid}),
+                    _version = t._version + 1,
+                    _updated_at = NOW(),
+                    {col_sets}
+                FROM jsonb_populate_record(NULL::{quoted_schema}.{quoted_table}, $3) r
+                WHERE t._id = $1
+                RETURNING t._id
+                "#,
+                col_sets = col_sets.join(", "),
+            );
+            let _: Uuid = sqlx::query_scalar(&sql)
+                .bind(feature_id)
+                .bind(serde_json::to_string(&geometry)?)
+                .bind(&props_for_record)
+                .fetch_one(&mut *tx)
+                .await?;
+        }
 
         if let Some(ref assets) = assets {
             let keep_keys: Vec<&str> = assets.keys().map(|k| k.as_str()).collect();
@@ -762,7 +929,7 @@ impl FeatureService {
 
         // Check version
         let check_sql = format!(
-            r#"SELECT version FROM {}.{} WHERE id = $1 FOR UPDATE"#,
+            r#"SELECT _version FROM {}.{} WHERE _id = $1 FOR UPDATE"#,
             quoted_schema, quoted_table
         );
         let current: Option<i64> = sqlx::query_scalar(&check_sql)
@@ -783,7 +950,7 @@ impl FeatureService {
         }
 
         let delete_sql = format!(
-            r#"DELETE FROM {}.{} WHERE id = $1"#,
+            r#"DELETE FROM {}.{} WHERE _id = $1"#,
             quoted_schema, quoted_table
         );
         sqlx::query(&delete_sql)
@@ -1022,15 +1189,15 @@ impl WhereClause {
                 builder.push(sql);
             }
             WhereClause::DatetimeStart(dt) => {
-                builder.push("datetime >= ");
+                builder.push("_datetime >= ");
                 builder.push_bind(dt);
             }
             WhereClause::DatetimeEnd(dt) => {
-                builder.push("datetime <= ");
+                builder.push("_datetime <= ");
                 builder.push_bind(dt);
             }
             WhereClause::DatetimeExact(dt) => {
-                builder.push("datetime = ");
+                builder.push("_datetime = ");
                 builder.push_bind(dt);
             }
         }

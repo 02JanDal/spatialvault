@@ -1,13 +1,88 @@
+use std::cmp::PartialEq;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::api::collections::schemas::CollectionSchema;
+use crate::api::collections::schemas::{CollectionSchema, ColumnDef, ColumnType};
 use crate::api::collections::sharing::{PermissionLevel, ShareEntry};
 use crate::api::common::{Bbox, Extent, SpatialExtent, TemporalExtent};
 use crate::auth::{RoleManager, is_valid_role_name, quote_ident};
 use crate::db::{Collection, CollectionWithCrs, Database};
-use crate::error::{AppError, AppResult, BadRequest, Forbidden, NotFound, PreconditionFailed, RenamedTo};
+use crate::error::{
+    AppError, AppResult, BadRequest, Forbidden, NotFound, PreconditionFailed, RenamedTo,
+};
 use snafu::OptionExt;
+
+/// System columns that are always present in item tables
+pub const SYSTEM_COLUMNS: &[&str] = &[
+    "_id",
+    "geometry",
+    "_version",
+    "_created_at",
+    "_updated_at",
+    "_datetime",
+];
+
+/// Information about a user-defined column
+pub struct ColumnInfo {
+    pub name: String,
+    pub pg_type: String,
+    pub is_nullable: bool,
+    pub column_default: Option<String>,
+}
+
+/// Map a ColumnType to its PostgreSQL type string
+fn pg_type(col_type: &ColumnType) -> &'static str {
+    match col_type {
+        ColumnType::String => "TEXT",
+        ColumnType::Integer => "BIGINT",
+        ColumnType::Real => "DOUBLE PRECISION",
+        ColumnType::Date => "DATE",
+        ColumnType::Datetime => "TIMESTAMPTZ",
+        ColumnType::Boolean => "BOOLEAN",
+    }
+}
+
+/// Validate a user-defined column name
+fn validate_column_name(name: &str) -> AppResult<()> {
+    if name.starts_with('_') {
+        return Err(BadRequest {
+            message: format!(
+                "Column name '{}' cannot start with '_' (reserved for system columns)",
+                name
+            ),
+        }
+        .build());
+    }
+    if name == "geometry" {
+        return Err(BadRequest {
+            message: "Column name 'geometry' is reserved".to_string(),
+        }
+        .build());
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || name.is_empty() {
+        return Err(BadRequest {
+            message: format!("Invalid column name '{}': must be non-empty and contain only alphanumeric characters and underscores", name),
+        }.build());
+    }
+    Ok(())
+}
+
+/// Convert a JSON default value to a SQL DEFAULT expression
+fn default_to_sql(value: &serde_json::Value, col_type: &ColumnType) -> AppResult<String> {
+    match value {
+        serde_json::Value::String(s) if s == "now" && *col_type == ColumnType::Datetime => {
+            Ok("NOW()".to_string())
+        }
+        serde_json::Value::String(s) => Ok(format!("'{}'", s.replace('\'', "''"))),
+        serde_json::Value::Number(n) => Ok(n.to_string()),
+        serde_json::Value::Bool(b) => Ok(if *b { "TRUE" } else { "FALSE" }.to_string()),
+        serde_json::Value::Null => Ok("NULL".to_string()),
+        _ => Err(BadRequest {
+            message: format!("Unsupported default value: {}", value),
+        }
+        .build()),
+    }
+}
 
 fn create_assets_table_sql(schema_name: &str, table_name: &str) -> String {
     let quoted_schema = quote_ident(schema_name);
@@ -16,7 +91,7 @@ fn create_assets_table_sql(schema_name: &str, table_name: &str) -> String {
     format!(
         r#"
         CREATE TABLE IF NOT EXISTS {quoted_schema}.{quoted_assets_table} (
-            item_id UUID NOT NULL REFERENCES {quoted_schema}.{quoted_table}(id) ON DELETE CASCADE,
+            item_id UUID NOT NULL REFERENCES {quoted_schema}.{quoted_table}(_id) ON DELETE CASCADE,
             PRIMARY KEY (item_id, key)
         ) INHERITS (spatialvault.assets_base)
         "#,
@@ -117,10 +192,10 @@ impl CollectionService {
         if let Some(collection) = collection {
             Ok(collection)
         } else {
-            Err(NotFound { message: format!(
-                "Collection not found: {}",
-                collection_id
-            ) }.build())
+            Err(NotFound {
+                message: format!("Collection not found: {}", collection_id),
+            }
+            .build())
         }
     }
 
@@ -192,6 +267,7 @@ impl CollectionService {
         description: Option<&str>,
         collection_type: &str,
         crs: i32,
+        columns: Option<&[ColumnDef]>,
     ) -> AppResult<Collection> {
         // Ensure user role exists
         let role_manager = RoleManager::new(self.db.pool());
@@ -199,29 +275,30 @@ impl CollectionService {
 
         // Parse canonical name to get schema and table name
         let parts: Vec<&str> = canonical_name.split(':').collect();
-        let schema_name = parts
-            .first()
-            .context(BadRequest { message: "Invalid collection name".to_string() })?;
+        let schema_name = parts.first().context(BadRequest {
+            message: "Invalid collection name".to_string(),
+        })?;
         let table_name = parts[1..].join("_");
 
         if table_name.is_empty() {
             return Err(BadRequest {
                 message: "Collection name must have at least two segments".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Validate schema and table names to prevent SQL injection
         if !is_valid_role_name(schema_name) {
-            return Err(BadRequest { message: format!(
-                "Invalid schema name: {}",
-                schema_name
-            ) }.build());
+            return Err(BadRequest {
+                message: format!("Invalid schema name: {}", schema_name),
+            }
+            .build());
         }
         if !is_valid_role_name(&table_name) {
-            return Err(BadRequest { message: format!(
-                "Invalid table name: {}",
-                table_name
-            ) }.build());
+            return Err(BadRequest {
+                message: format!("Invalid table name: {}", table_name),
+            }
+            .build());
         }
 
         let id = Uuid::new_v4();
@@ -253,18 +330,39 @@ impl CollectionService {
         let quoted_schema = quote_ident(schema_name);
         let quoted_table = quote_ident(&table_name);
 
+        // Build user column definitions
+        let mut user_column_defs = String::new();
+        if let Some(cols) = columns {
+            for col in cols {
+                validate_column_name(&col.name)?;
+                let col_type = pg_type(&col.column_type);
+                let nullable = if col.nullable { "" } else { " NOT NULL" };
+                let default = if let Some(ref def) = col.default {
+                    format!(" DEFAULT {}", default_to_sql(def, &col.column_type)?)
+                } else {
+                    String::new()
+                };
+                user_column_defs.push_str(&format!(
+                    "\n                    {} {}{}{},",
+                    quote_ident(&col.name),
+                    col_type,
+                    nullable,
+                    default
+                ));
+            }
+        }
+
         let create_table_sql = format!(
             r#"
-                CREATE TABLE {}.{} (
-                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    geometry geometry(Geometry, {}) NOT NULL,
-                    properties JSONB DEFAULT '{{}}',
-                    version BIGINT NOT NULL DEFAULT 1,
-                    created_at TIMESTAMPTZ DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                CREATE TABLE {quoted_schema}.{quoted_table} (
+                    _id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    geometry geometry(Geometry, {crs}) NOT NULL,
+                    {user_column_defs}
+                    _version BIGINT NOT NULL DEFAULT 1,
+                    _created_at TIMESTAMPTZ DEFAULT NOW(),
+                    _updated_at TIMESTAMPTZ DEFAULT NOW()
                 )
                 "#,
-            quoted_schema, quoted_table, crs
         );
         sqlx::query(&create_table_sql).execute(&mut *tx).await?;
 
@@ -286,7 +384,7 @@ impl CollectionService {
         // Add assets and datetime to table for raster/pointcloud collections
         if collection_type == "raster" || collection_type == "pointcloud" {
             let add_datetime_sql = format!(
-                "ALTER TABLE {}.{} ADD COLUMN datetime TIMESTAMPTZ",
+                "ALTER TABLE {}.{} ADD COLUMN _datetime TIMESTAMPTZ",
                 quoted_schema, quoted_table
             );
             sqlx::query(&add_datetime_sql).execute(&mut *tx).await?;
@@ -308,6 +406,8 @@ impl CollectionService {
         title: Option<&str>,
         description: Option<&str>,
         new_name: Option<&str>,
+        add_columns: Option<&[ColumnDef]>,
+        remove_columns: Option<&[String]>,
     ) -> AppResult<Collection>
     where
         Matches: FnOnce(i64) -> bool,
@@ -325,20 +425,24 @@ impl CollectionService {
         .bind(collection_id)
         .fetch_optional(&mut *tx)
         .await?
-        .context(NotFound { message: format!("Collection not found: {}", collection_id) })?;
+        .context(NotFound {
+            message: format!("Collection not found: {}", collection_id),
+        })?;
 
         // Check ownership (only owner can update)
         if current.owner != username {
             return Err(Forbidden {
                 message: "Only owner can update collection".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Check version if If-Match header was provided
         if !matches(current.version) {
             return Err(PreconditionFailed {
                 message: "Collection has been modified".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Handle rename
@@ -378,6 +482,68 @@ impl CollectionService {
         .fetch_one(&mut *tx)
         .await?;
 
+        // Handle column additions
+        if let Some(cols) = add_columns {
+            let quoted_schema = quote_ident(&current.schema_name);
+            let quoted_table = quote_ident(&current.table_name);
+            let existing = self.get_user_columns(&current).await?;
+
+            for col in cols {
+                validate_column_name(&col.name)?;
+
+                // Check if column already exists
+                if let Some(existing_col) = existing.iter().find(|c| c.name == col.name) {
+                    let expected_type = pg_type(&col.column_type).to_lowercase();
+                    if existing_col.pg_type.to_lowercase() != expected_type {
+                        return Err(BadRequest {
+                            message: format!(
+                                "Column '{}' already exists with type '{}', cannot change to '{}'",
+                                col.name, existing_col.pg_type, expected_type
+                            ),
+                        }
+                        .build());
+                    }
+                    continue; // Column already exists with same type, skip
+                }
+
+                let col_type = pg_type(&col.column_type);
+                let nullable = if col.nullable { "" } else { " NOT NULL" };
+                let default = if let Some(ref def) = col.default {
+                    format!(" DEFAULT {}", default_to_sql(def, &col.column_type)?)
+                } else {
+                    String::new()
+                };
+
+                let alter_sql = format!(
+                    "ALTER TABLE {}.{} ADD COLUMN {} {}{}{}",
+                    quoted_schema,
+                    quoted_table,
+                    quote_ident(&col.name),
+                    col_type,
+                    nullable,
+                    default
+                );
+                sqlx::query(&alter_sql).execute(&mut *tx).await?;
+            }
+        }
+
+        // Handle column removals
+        if let Some(cols) = remove_columns {
+            let quoted_schema = quote_ident(&current.schema_name);
+            let quoted_table = quote_ident(&current.table_name);
+
+            for col_name in cols {
+                validate_column_name(col_name)?;
+                let alter_sql = format!(
+                    "ALTER TABLE {}.{} DROP COLUMN IF EXISTS {}",
+                    quoted_schema,
+                    quoted_table,
+                    quote_ident(col_name)
+                );
+                sqlx::query(&alter_sql).execute(&mut *tx).await?;
+            }
+        }
+
         tx.commit().await?;
 
         Ok(collection)
@@ -391,6 +557,7 @@ impl CollectionService {
         matches: Matches,
         title: &str,
         description: Option<&str>,
+        columns: Option<&[ColumnDef]>,
     ) -> AppResult<Collection>
     where
         Matches: Fn(i64) -> bool,
@@ -408,20 +575,24 @@ impl CollectionService {
         .bind(collection_id)
         .fetch_optional(&mut *tx)
         .await?
-        .context(NotFound { message: format!("Collection not found: {}", collection_id) })?;
+        .context(NotFound {
+            message: format!("Collection not found: {}", collection_id),
+        })?;
 
         // Check ownership first (before version check for proper error ordering)
         if current.owner != username {
             return Err(Forbidden {
                 message: "Only owner can update collection".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Check version if If-Match header was provided
         if !matches(current.version) {
             return Err(PreconditionFailed {
                 message: "Collection has been modified".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Replace collection (title and description are the only mutable fields)
@@ -442,6 +613,66 @@ impl CollectionService {
         .bind(current.id)
         .fetch_one(&mut *tx)
         .await?;
+
+        // Sync columns if provided (PUT semantics: add new, drop missing, error on type change)
+        if let Some(cols) = columns {
+            let quoted_schema = quote_ident(&current.schema_name);
+            let quoted_table = quote_ident(&current.table_name);
+            let existing = self.get_user_columns(&current).await?;
+
+            // Validate all new column names first
+            for col in cols {
+                validate_column_name(&col.name)?;
+            }
+
+            // Add new columns or verify existing types match
+            for col in cols {
+                if let Some(existing_col) = existing.iter().find(|c| c.name == col.name) {
+                    let expected_type = pg_type(&col.column_type).to_lowercase();
+                    if existing_col.pg_type.to_lowercase() != expected_type {
+                        return Err(BadRequest {
+                            message: format!(
+                                "Column '{}' has type '{}', cannot change to '{}'",
+                                col.name, existing_col.pg_type, expected_type
+                            ),
+                        }
+                        .build());
+                    }
+                } else {
+                    let col_type = pg_type(&col.column_type);
+                    let nullable = if col.nullable { "" } else { " NOT NULL" };
+                    let default = if let Some(ref def) = col.default {
+                        format!(" DEFAULT {}", default_to_sql(def, &col.column_type)?)
+                    } else {
+                        String::new()
+                    };
+                    let alter_sql = format!(
+                        "ALTER TABLE {}.{} ADD COLUMN {} {}{}{}",
+                        quoted_schema,
+                        quoted_table,
+                        quote_ident(&col.name),
+                        col_type,
+                        nullable,
+                        default
+                    );
+                    sqlx::query(&alter_sql).execute(&mut *tx).await?;
+                }
+            }
+
+            // Drop columns not in the new definition
+            let new_names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
+            for existing_col in &existing {
+                if !new_names.contains(&existing_col.name.as_str()) {
+                    let alter_sql = format!(
+                        "ALTER TABLE {}.{} DROP COLUMN {}",
+                        quoted_schema,
+                        quoted_table,
+                        quote_ident(&existing_col.name)
+                    );
+                    sqlx::query(&alter_sql).execute(&mut *tx).await?;
+                }
+            }
+        }
 
         tx.commit().await?;
 
@@ -469,20 +700,24 @@ impl CollectionService {
         .bind(collection_id)
         .fetch_optional(&mut *tx)
         .await?
-        .context(NotFound { message: format!("Collection not found: {}", collection_id) })?;
+        .context(NotFound {
+            message: format!("Collection not found: {}", collection_id),
+        })?;
 
         // Check ownership (only owner can delete)
         if collection.owner != username {
             return Err(Forbidden {
                 message: "Only owner can delete collection".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Check version if If-Match header was provided
         if !matches(collection.version) {
             return Err(PreconditionFailed {
                 message: "Collection has been modified".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         let drop_sql = format!(
@@ -518,7 +753,7 @@ impl CollectionService {
             SELECT EXISTS (
                 SELECT 1
                 FROM information_schema.columns
-                WHERE table_schema = $1 AND table_name = $2 AND column_name = 'datetime' AND data_type IN ('timestamp with time zone', 'timestamp without time zone')
+                WHERE table_schema = $1 AND table_name = $2 AND column_name = '_datetime' AND data_type IN ('timestamp with time zone', 'timestamp without time zone')
             )
             "#,
         )        .bind(&collection.schema_name)
@@ -546,7 +781,7 @@ impl CollectionService {
                   AND kcu.column_name = 'item_id'
                   AND ccu.table_schema = $1
                   AND ccu.table_name = $3
-                  AND ccu.column_name = 'id'
+                  AND ccu.column_name = '_id'
             )
             "#,
         )
@@ -636,9 +871,9 @@ impl CollectionService {
         )> = if self.has_datetime(collection).await? {
             let sql = format!(
                 r#"
-                        SELECT MIN(datetime) as min_dt, MAX(datetime) as max_dt
+                        SELECT MIN(_datetime) as min_dt, MAX(_datetime) as max_dt
                         FROM {}.{}
-                        WHERE datetime IS NOT NULL
+                        WHERE _datetime IS NOT NULL
                     "#,
                 quote_ident(&collection.schema_name),
                 quote_ident(&collection.table_name)
@@ -706,11 +941,19 @@ impl CollectionService {
         .fetch_all(self.db.pool())
         .await?;
 
+        // System columns to exclude from the user-facing schema
+        let hidden_columns = ["_id", "_version", "_created_at", "_updated_at"];
+
         // Build JSON Schema properties
         let mut properties = serde_json::Map::new();
         let mut required = Vec::new();
 
         for (column_name, data_type, is_nullable, srid) in columns {
+            // Skip system columns
+            if hidden_columns.contains(&column_name.as_str()) {
+                continue;
+            }
+
             let column_schema = match data_type.as_str() {
                 "uuid" => serde_json::json!({ "type": "string", "format": "uuid" }),
                 "text" | "character varying" => serde_json::json!({ "type": "string" }),
@@ -760,6 +1003,37 @@ impl CollectionService {
         Ok(schema)
     }
 
+    /// Get user-defined columns (excludes system columns and geometry)
+    pub async fn get_user_columns(&self, collection: &Collection) -> AppResult<Vec<ColumnInfo>> {
+        let rows: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+            r#"
+            SELECT column_name, data_type, is_nullable, column_default
+            FROM information_schema.columns
+            WHERE table_schema = $1 AND table_name = $2
+            ORDER BY ordinal_position
+            "#,
+        )
+        .bind(&collection.schema_name)
+        .bind(&collection.table_name)
+        .fetch_all(self.db.pool())
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .filter(|(name, data_type, _, _)| {
+                !SYSTEM_COLUMNS.contains(&name.as_str()) && data_type != "USER-DEFINED"
+            })
+            .map(
+                |(name, data_type, is_nullable, column_default)| ColumnInfo {
+                    name,
+                    pg_type: data_type,
+                    is_nullable: is_nullable == "YES",
+                    column_default,
+                },
+            )
+            .collect())
+    }
+
     pub async fn list_shares(
         &self,
         username: &str,
@@ -771,7 +1045,8 @@ impl CollectionService {
         if collection.owner != username {
             return Err(Forbidden {
                 message: "Only owner can view sharing settings".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Query PostgreSQL grants from information_schema
@@ -850,13 +1125,17 @@ impl CollectionService {
         if collection.owner != username {
             return Err(Forbidden {
                 message: "Only owner can manage sharing".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Verify role exists (groups/users assumed to be pre-existing)
         let role_manager = RoleManager::new(self.db.pool());
         if !role_manager.role_exists(principal).await? {
-            return Err(NotFound { message: format!("Role not found: {}", principal) }.build());
+            return Err(NotFound {
+                message: format!("Role not found: {}", principal),
+            }
+            .build());
         }
 
         // Grant privileges
@@ -888,7 +1167,8 @@ impl CollectionService {
         if collection.owner != username {
             return Err(Forbidden {
                 message: "Only owner can manage sharing".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         let role_manager = RoleManager::new(self.db.pool());
