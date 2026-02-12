@@ -284,7 +284,7 @@ pub async fn get_tile(
         "vector" => {
             // Get MVT tile data
             let tile_data = service
-                .get_vector_tile(&user.username, &collection.as_collection(), z, x, y)
+                .get_vector_tile(&user.username, &collection.as_collection(), collection.storage_crs, z, x, y)
                 .await?;
 
             Ok((

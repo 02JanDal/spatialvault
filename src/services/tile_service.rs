@@ -19,6 +19,7 @@ impl TileService {
         &self,
         username: &str,
         collection: &Collection,
+        storage_srid: i32,
         z: u32,
         x: u32,
         y: u32,
@@ -28,9 +29,6 @@ impl TileService {
                 message: "Vector tiles only available for vector collections".to_string(),
             }.build());
         }
-
-        // Get storage SRID
-        let storage_srid = self.get_storage_srid(&collection).await?;
 
         // Build MVT query
         let sql = mvt_sql(
@@ -130,21 +128,6 @@ impl TileService {
         Ok(assets.into_iter().map(|(href,)| href).collect())
     }
 
-    // TODO: move to CollectionService (same as with the same method in FeatureService)
-    async fn get_storage_srid(&self, collection: &Collection) -> AppResult<i32> {
-        let sql = r#"
-            SELECT srid FROM geometry_columns
-            WHERE f_table_schema = $1 AND f_table_name = $2
-        "#;
-
-        let result: Option<(i32,)> = sqlx::query_as(sql)
-            .bind(&collection.schema_name)
-            .bind(&collection.table_name)
-            .fetch_optional(self.db.pool())
-            .await?;
-
-        Ok(result.map(|(srid,)| srid).unwrap_or(4326))
-    }
 }
 
 /// Create an empty/transparent tile in the requested format

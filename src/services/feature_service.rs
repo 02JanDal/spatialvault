@@ -37,12 +37,12 @@ impl FeatureService {
         datetime: Option<&str>,
         filter: Option<&str>,
     ) -> AppResult<(Vec<Feature>, i64, i32)> {
-        let collection = self
+        let cwc = self
             .collections
             .get_collection(username, collection_id)
-            .await?
-            .as_collection();
-        let storage_srid = self.get_storage_srid(&collection).await?;
+            .await?;
+        let storage_srid = cwc.storage_crs;
+        let collection = cwc.as_collection();
 
         let has_datetime = self.collections.has_datetime(&collection).await?;
         let has_assets = self.collections.has_assets(&collection).await?;
@@ -489,12 +489,12 @@ impl FeatureService {
         feature_id: Uuid,
         target_crs: Option<i32>,
     ) -> AppResult<Option<(Feature, i64, i32)>> {
-        let collection = self
+        let cwc = self
             .collections
             .get_collection(username, collection_id)
-            .await?
-            .as_collection();
-        let storage_srid = self.get_storage_srid(&collection).await?;
+            .await?;
+        let storage_srid = cwc.storage_crs;
+        let collection = cwc.as_collection();
 
         let has_datetime = self.collections.has_datetime(&collection).await?;
         let has_assets = self.collections.has_assets(&collection).await?;
@@ -595,19 +595,18 @@ impl FeatureService {
         _datetime: Option<DateTime<Utc>>,
         assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)> {
-        let collection = self
+        let cwc = self
             .collections
             .get_collection(username, collection_id)
-            .await?
-            .as_collection();
+            .await?;
+        let storage_srid = cwc.storage_crs;
+        let collection = cwc.as_collection();
 
         if collection.collection_type != "vector" {
             return Err(BadRequest {
                 message: "Feature creation only available for vector collections. Use processes API for raster/pointcloud.".to_string(),
             }.build());
         }
-
-        let storage_srid = self.get_storage_srid(&collection).await?;
         let has_datetime = self.collections.has_datetime(&collection).await?;
         let has_assets = assets.as_ref().is_some_and(|a| !a.is_empty());
 
@@ -731,15 +730,14 @@ impl FeatureService {
     where
         Matches: FnOnce(i64) -> bool,
     {
-        let collection = self
+        let cwc = self
             .collections
             .get_collection(username, collection_id)
-            .await?
-            .as_collection();
+            .await?;
+        let storage_srid = cwc.storage_crs;
+        let collection = cwc.as_collection();
         // Check write permission first (before version check for proper error ordering)
         self.check_write_permission(username, &collection).await?;
-
-        let storage_srid = self.get_storage_srid(&collection).await?;
         let has_datetime = self.collections.has_datetime(&collection).await?;
         let has_assets_input = assets.as_ref().is_some_and(|a| !a.is_empty());
         let has_assets = has_assets_input || self.collections.has_assets(&collection).await?;
@@ -924,12 +922,12 @@ impl FeatureService {
     where
         Matches: FnOnce(i64) -> bool,
     {
-        let collection = self
+        let cwc = self
             .collections
             .get_collection(username, collection_id)
-            .await?
-            .as_collection();
-        let storage_srid = self.get_storage_srid(&collection).await?;
+            .await?;
+        let storage_srid = cwc.storage_crs;
+        let collection = cwc.as_collection();
         let has_datetime = self.collections.has_datetime(&collection).await?;
         let has_assets_input = assets.as_ref().is_some_and(|a| !a.is_empty());
         let has_assets = has_assets_input || self.collections.has_assets(&collection).await?;
@@ -1295,21 +1293,6 @@ impl FeatureService {
         Ok(())
     }
 
-    async fn get_storage_srid(&self, collection: &Collection) -> AppResult<i32> {
-        // Get SRID from geometry column definition
-        let sql = r#"
-            SELECT srid FROM geometry_columns
-            WHERE f_table_schema = $1 AND f_table_name = $2
-            "#;
-
-        let result: Option<i32> = sqlx::query_scalar(sql)
-            .bind(&collection.schema_name)
-            .bind(&collection.table_name)
-            .fetch_optional(self.db.pool())
-            .await?;
-
-        Ok(result.unwrap_or(4326))
-    }
 }
 
 #[derive(Debug)]
