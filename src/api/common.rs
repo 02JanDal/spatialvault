@@ -185,11 +185,16 @@ pub mod etag {
         format!("\"{}\"", version).parse().unwrap()
     }
 
-    // TODO: add a test for this
-    pub fn matches(version: i64, if_match: Option<TypedHeader<IfMatch>>) -> bool {
-        if_match.map_or(true, |if_match| {
-            if_match.precondition_passes(&make(version))
-        })
+    pub trait VersionMatch {
+        fn matches(&self, version: i64) -> bool;
+    }
+
+    impl VersionMatch for Option<TypedHeader<IfMatch>> {
+        fn matches(&self, version: i64) -> bool {
+            self.as_ref().map_or(true, |if_match| {
+                if_match.precondition_passes(&make(version))
+            })
+        }
     }
 }
 
@@ -350,5 +355,36 @@ impl Header for Location {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         values.extend(std::iter::once(HeaderValue::from_str(&self.0).unwrap()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::etag::VersionMatch;
+    use axum_extra::TypedHeader;
+    use axum_extra::headers::{Header, IfMatch};
+
+    fn make_if_match(version: i64) -> Option<TypedHeader<IfMatch>> {
+        let value = format!("\"{}\"", version).parse().unwrap();
+        let if_match = IfMatch::decode(&mut std::iter::once(&value)).unwrap();
+        Some(TypedHeader(if_match))
+    }
+
+    #[test]
+    fn matches_returns_true_when_no_header() {
+        let if_match: Option<TypedHeader<IfMatch>> = None;
+        assert!(if_match.matches(1));
+    }
+
+    #[test]
+    fn matches_returns_true_when_version_matches() {
+        let if_match = make_if_match(42);
+        assert!(if_match.matches(42));
+    }
+
+    #[test]
+    fn matches_returns_false_when_version_differs() {
+        let if_match = make_if_match(42);
+        assert!(!if_match.matches(99));
     }
 }

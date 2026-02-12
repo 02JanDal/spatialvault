@@ -370,7 +370,7 @@ pub async fn patch_collection(
         .update_collection(
             &user.username,
             &collection_id,
-            |version| etag::matches(version, if_match),
+            &if_match,
             request.title.as_deref(),
             request.description.as_deref(),
             request.id.as_deref(),
@@ -436,7 +436,7 @@ pub async fn update_collection(
         .replace_collection(
             &user.username,
             &collection_id,
-            |version| etag::matches(version, if_match.clone()),
+            &if_match,
             &request.title,
             request.description.as_deref(),
             request.columns.as_deref(),
@@ -480,9 +480,7 @@ pub async fn delete_collection(
     if_match: Option<TypedHeader<IfMatch>>,
 ) -> AppResult<StatusCode> {
     service
-        .delete_collection(&user.username, &path.collection_id, |version| {
-            etag::matches(version, if_match.clone())
-        })
+        .delete_collection(&user.username, &path.collection_id, &if_match)
         .await?;
 
     Ok(StatusCode::NO_CONTENT)

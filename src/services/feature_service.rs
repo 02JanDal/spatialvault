@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::api::common::etag::VersionMatch;
 use crate::api::common::{Asset, Assets, GeoJsonGeometry};
 use crate::api::features::Feature;
 use crate::api::features::crs::transform_geometry_sql;
@@ -716,19 +717,17 @@ impl FeatureService {
         Ok((feature, version))
     }
 
-    pub async fn update_feature<Matches>(
+    pub async fn update_feature(
         &self,
         username: &str,
         collection_id: &str,
         feature_id: Uuid,
-        matches: Matches,
+        matches: &impl VersionMatch,
         geometry: Option<GeoJsonGeometry>,
         properties: Option<serde_json::Value>,
         _datetime: Option<DateTime<Utc>>,
         assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)>
-    where
-        Matches: FnOnce(i64) -> bool,
     {
         let cwc = self
             .collections
@@ -775,7 +774,7 @@ impl FeatureService {
         })?;
 
         // Check version if If-Match header was provided
-        if !matches(current_version) {
+        if !matches.matches(current_version) {
             return Err(PreconditionFailed {
                 message: "Feature has been modified".to_string(),
             }
@@ -908,19 +907,17 @@ impl FeatureService {
         Ok((feature, version))
     }
 
-    pub async fn replace_feature<Matches>(
+    pub async fn replace_feature(
         &self,
         username: &str,
         collection_id: &str,
         feature_id: Uuid,
-        matches: Matches,
+        matches: &impl VersionMatch,
         geometry: GeoJsonGeometry,
         properties: serde_json::Value,
         _datetime: Option<DateTime<Utc>>,
         assets: Option<Assets>,
     ) -> AppResult<(Feature, i64)>
-    where
-        Matches: FnOnce(i64) -> bool,
     {
         let cwc = self
             .collections
@@ -966,7 +963,7 @@ impl FeatureService {
         })?;
 
         // Check version if If-Match header was provided
-        if !matches(current_version) {
+        if !matches.matches(current_version) {
             return Err(PreconditionFailed {
                 message: "Feature has been modified".to_string(),
             }
@@ -1082,15 +1079,13 @@ impl FeatureService {
         Ok((feature, version))
     }
 
-    pub async fn delete_feature<Matches>(
+    pub async fn delete_feature(
         &self,
         username: &str,
         collection_id: &str,
         feature_id: Uuid,
-        matches: Matches,
+        matches: &impl VersionMatch,
     ) -> AppResult<()>
-    where
-        Matches: FnOnce(i64) -> bool,
     {
         let collection = self
             .collections
@@ -1122,7 +1117,7 @@ impl FeatureService {
         })?;
 
         // Check version if If-Match header was provided
-        if !matches(current_version) {
+        if !matches.matches(current_version) {
             return Err(PreconditionFailed {
                 message: "Feature has been modified".to_string(),
             }

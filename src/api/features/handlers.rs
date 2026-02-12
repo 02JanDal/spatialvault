@@ -362,7 +362,7 @@ pub async fn update_feature(
             &user.username,
             &collection_id,
             feature_id,
-            |version| etag::matches(version, if_match),
+            &if_match,
             request.geometry,
             request.properties,
             datetime,
@@ -413,7 +413,7 @@ pub async fn replace_feature(
             &user.username,
             &collection_id,
             feature_id,
-            |version| etag::matches(version, if_match),
+            &if_match,
             request.geometry,
             request.properties,
             datetime,
@@ -445,9 +445,7 @@ pub async fn delete_feature(
     let feature_id = path.feature_id;
 
     service
-        .delete_feature(&user.username, &collection_id, feature_id, |version| {
-            etag::matches(version, if_match)
-        })
+        .delete_feature(&user.username, &collection_id, feature_id, &if_match)
         .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())

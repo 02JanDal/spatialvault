@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use crate::api::collections::schemas::{CollectionSchema, ColumnDef, ColumnType};
 use crate::api::collections::sharing::{PermissionLevel, ShareEntry};
+use crate::api::common::etag::VersionMatch;
 use crate::api::common::{Bbox, Extent, SpatialExtent, TemporalExtent};
 use crate::auth::{RoleManager, is_valid_role_name, quote_ident};
 use crate::db::{Collection, CollectionWithCrs, Database};
@@ -480,19 +481,17 @@ impl CollectionService {
         Ok(collection)
     }
 
-    pub async fn update_collection<Matches>(
+    pub async fn update_collection(
         &self,
         username: &str,
         collection_id: &str,
-        matches: Matches,
+        matches: &impl VersionMatch,
         title: Option<&str>,
         description: Option<&str>,
         new_name: Option<&str>,
         add_columns: Option<&[ColumnDef]>,
         remove_columns: Option<&[String]>,
     ) -> AppResult<Collection>
-    where
-        Matches: FnOnce(i64) -> bool,
     {
         let mut tx = self.db.pool().begin().await?;
 
@@ -523,7 +522,7 @@ impl CollectionService {
         }
 
         // Check version if If-Match header was provided
-        if !matches(current.version) {
+        if !matches.matches(current.version) {
             return Err(PreconditionFailed {
                 message: "Collection has been modified".to_string(),
             }
@@ -635,17 +634,15 @@ impl CollectionService {
     }
 
     /// Replace a collection (PUT semantics - full replacement of mutable fields)
-    pub async fn replace_collection<Matches>(
+    pub async fn replace_collection(
         &self,
         username: &str,
         collection_id: &str,
-        matches: Matches,
+        matches: &impl VersionMatch,
         title: &str,
         description: Option<&str>,
         columns: Option<&[ColumnDef]>,
     ) -> AppResult<Collection>
-    where
-        Matches: Fn(i64) -> bool,
     {
         let mut tx = self.db.pool().begin().await?;
 
@@ -676,7 +673,7 @@ impl CollectionService {
         }
 
         // Check version if If-Match header was provided
-        if !matches(current.version) {
+        if !matches.matches(current.version) {
             return Err(PreconditionFailed {
                 message: "Collection has been modified".to_string(),
             }
@@ -767,14 +764,12 @@ impl CollectionService {
         Ok(collection)
     }
 
-    pub async fn delete_collection<Matches>(
+    pub async fn delete_collection(
         &self,
         username: &str,
         collection_id: &str,
-        matches: Matches,
+        matches: &impl VersionMatch,
     ) -> AppResult<()>
-    where
-        Matches: Fn(i64) -> bool,
     {
         let mut tx = self.db.pool().begin().await?;
 
@@ -804,7 +799,7 @@ impl CollectionService {
         }
 
         // Check version if If-Match header was provided
-        if !matches(collection.version) {
+        if !matches.matches(collection.version) {
             return Err(PreconditionFailed {
                 message: "Collection has been modified".to_string(),
             }
