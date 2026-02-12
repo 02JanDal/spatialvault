@@ -152,11 +152,7 @@ impl IntoResponse for AppError {
             }
             AppError::RenamedTo { message, .. } => {
                 let mut headers = HeaderMap::new();
-                // TODO: handle mounting at non-root subpath
-                headers.insert(
-                    header::LOCATION,
-                    format!("/collections/{}", message).parse().unwrap(),
-                );
+                headers.insert(header::LOCATION, message.parse().unwrap());
                 return (StatusCode::TEMPORARY_REDIRECT, headers).into_response();
             }
         };

@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("S3 storage initialized");
 
     // Create services
-    let collection_service = Arc::new(CollectionService::new(db.clone()));
+    let collection_service = Arc::new(CollectionService::new(db.clone(), config.base_url.clone()));
     let feature_service = Arc::new(FeatureService::new(db.clone(), collection_service.clone()));
     let tile_service = Arc::new(TileService::new(db.clone()));
     let coverage_service = Arc::new(CoverageService::new(db.clone(), collection_service.clone()));

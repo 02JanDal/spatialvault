@@ -246,7 +246,8 @@ impl TestApp {
         db.run_migrations().await.expect("Failed to run migrations");
 
         // Create services
-        let collection_service = Arc::new(CollectionService::new(db.clone()));
+        let collection_service =
+            Arc::new(CollectionService::new(db.clone(), config.base_url.clone()));
         let feature_service = Arc::new(FeatureService::new(db.clone(), collection_service.clone()));
         let tile_service = Arc::new(TileService::new(db.clone()));
         let coverage_service =
@@ -452,7 +453,8 @@ impl TestApp {
     /// Create a new TestApp instance sharing the same database but with a different user.
     /// Efficient for multi-user authorization tests - no new container needed.
     pub fn spawn_user(&self, mock_auth: MockAuthState) -> TestApp {
-        let collection_service = Arc::new(CollectionService::new(self.db.clone()));
+        let collection_service =
+            Arc::new(CollectionService::new(self.db.clone(), self.config.base_url.clone()));
         let feature_service = Arc::new(FeatureService::new(
             self.db.clone(),
             collection_service.clone(),

@@ -101,11 +101,12 @@ fn create_assets_table_sql(schema_name: &str, table_name: &str) -> String {
 
 pub struct CollectionService {
     db: Arc<Database>,
+    base_url: String,
 }
 
 impl CollectionService {
-    pub fn new(db: Arc<Database>) -> Self {
-        Self { db }
+    pub fn new(db: Arc<Database>, base_url: String) -> Self {
+        Self { db, base_url }
     }
 
     pub async fn list_collections(
@@ -224,7 +225,10 @@ impl CollectionService {
         .fetch_optional(self.db.pool())
         .await?;
         if let Some(name) = new_name {
-            Err(RenamedTo { message: name }.build())
+            Err(RenamedTo {
+                message: format!("{}/collections/{}", self.base_url, name),
+            }
+            .build())
         } else {
             Ok(())
         }
