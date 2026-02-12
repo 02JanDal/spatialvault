@@ -112,10 +112,30 @@ impl CollectionService {
         username: &str,
         limit: u32,
         offset: u32,
-    ) -> AppResult<Vec<CollectionWithCrs>> {
+    ) -> AppResult<(Vec<CollectionWithCrs>, i64)> {
         // List collections accessible to this user with storage CRS included
         // This includes owned collections and shared collections
-        let collections: Vec<CollectionWithCrs> = sqlx::query_as(
+        let where_clause = r#"
+            WHERE c.owner = $1
+               OR EXISTS (
+                   SELECT 1 FROM information_schema.table_privileges tp
+                   WHERE tp.table_schema = c.schema_name
+                     AND tp.table_name = c.table_name
+                     AND tp.grantee = $1
+                     AND tp.privilege_type = 'SELECT'
+               )
+        "#;
+
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM spatialvault.collections c {}",
+            where_clause
+        );
+        let count: (i64,) = sqlx::query_as(&count_sql)
+            .bind(username)
+            .fetch_one(self.db.pool())
+            .await?;
+
+        let select_sql = format!(
             r#"
             SELECT c.*,
                 COALESCE(
@@ -127,25 +147,20 @@ impl CollectionService {
                     4326
                 ) as storage_crs
             FROM spatialvault.collections c
-            WHERE c.owner = $1
-               OR EXISTS (
-                   SELECT 1 FROM information_schema.table_privileges tp
-                   WHERE tp.table_schema = c.schema_name
-                     AND tp.table_name = c.table_name
-                     AND tp.grantee = $1
-                     AND tp.privilege_type = 'SELECT'
-               )
+            {}
             ORDER BY c.created_at DESC
             LIMIT $2 OFFSET $3
             "#,
-        )
-        .bind(username)
-        .bind(limit as i64)
-        .bind(offset as i64)
-        .fetch_all(self.db.pool())
-        .await?;
+            where_clause
+        );
+        let collections: Vec<CollectionWithCrs> = sqlx::query_as(&select_sql)
+            .bind(username)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(self.db.pool())
+            .await?;
 
-        Ok(collections)
+        Ok((collections, count.0))
     }
 
     pub async fn get_collection(

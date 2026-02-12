@@ -64,8 +64,7 @@ pub struct CollectionResponse {
 pub struct CollectionsResponse {
     pub collections: Vec<CollectionResponse>,
     pub links: Vec<Link>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub number_matched: Option<u64>,
+    pub number_matched: u64,
     pub number_returned: u64,
 }
 

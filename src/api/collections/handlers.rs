@@ -131,7 +131,7 @@ pub async fn list_collections(
     State((_storage, service, _process_service)): State<AppState>,
     Query(params): Query<ListCollectionsParams>,
 ) -> AppResult<Json<CollectionsResponse>> {
-    let collections = service
+    let (collections, total_count) = service
         .list_collections(&user.username, params.limit, params.offset)
         .await?;
 
@@ -156,7 +156,7 @@ pub async fn list_collections(
         links: vec![
             Link::new(format!("{}/collections", base_url), rel::SELF).with_type(media_type::JSON),
         ],
-        number_matched: None, // TODO: populate, make non-optional in model
+        number_matched: total_count as u64,
     };
 
     Ok(Json(response))
