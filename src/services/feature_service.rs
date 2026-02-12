@@ -350,6 +350,138 @@ impl FeatureService {
             .unwrap_or_default())
     }
 
+    /// Read a feature from the given connection (pool or transaction).
+    /// Caller provides pre-computed collection metadata to avoid extra queries.
+    async fn read_feature(
+        conn: &mut sqlx::PgConnection,
+        collection: &Collection,
+        collection_id: &str,
+        feature_id: Uuid,
+        has_datetime: bool,
+        has_assets: bool,
+    ) -> AppResult<Option<(Feature, i64)>> {
+        let datetime_column = if has_datetime {
+            "t._datetime"
+        } else {
+            "NULL AS datetime"
+        };
+
+        let system_exclusions = SYSTEM_COLUMNS
+            .iter()
+            .map(|c| format!("- '{}'", c))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let sql = format!(
+            r#"
+            SELECT
+                t._id,
+                ST_AsGeoJSON(t.geometry)::jsonb as geometry,
+                ST_XMin(t.geometry) as minx,
+                ST_YMin(t.geometry) as miny,
+                ST_XMax(t.geometry) as maxx,
+                ST_YMax(t.geometry) as maxy,
+                {datetime_column},
+                (to_jsonb(t.*) {system_exclusions}) as properties,
+                t._version
+            FROM {quoted_schema}.{quoted_table} t
+            WHERE t._id = $1
+            "#,
+            quoted_schema = quote_ident(&collection.schema_name),
+            quoted_table = quote_ident(&collection.table_name),
+        );
+
+        let row: Option<(
+            Uuid,
+            sqlx::types::Json<GeoJsonGeometry>,
+            f64,
+            f64,
+            f64,
+            f64,
+            Option<DateTime<Utc>>,
+            Option<serde_json::Value>,
+            i64,
+        )> = sqlx::query_as(&sql)
+            .bind(feature_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+
+        let Some((id, geometry, minx, miny, maxx, maxy, datetime, properties, version)) = row
+        else {
+            return Ok(None);
+        };
+
+        // Get assets from the same connection
+        let assets = if has_assets {
+            let assets_sql = format!(
+                r#"
+                SELECT key, href, type, title, description, roles, file_size
+                FROM {}.{}
+                WHERE item_id = $1
+                "#,
+                quote_ident(&collection.schema_name),
+                quote_ident(&format!("_{}_assets", collection.table_name)),
+            );
+            let asset_rows: Vec<(
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<Vec<String>>,
+                Option<i64>,
+            )> = sqlx::query_as(&assets_sql)
+                .bind(id)
+                .fetch_all(&mut *conn)
+                .await?;
+
+            let mut assets_map = Assets::new();
+            for (key, href, media_type, title, description, roles, file_size) in asset_rows {
+                assets_map.insert(
+                    key,
+                    Self::build_asset(
+                        &href,
+                        media_type.as_deref(),
+                        title.as_deref(),
+                        description.as_deref(),
+                        roles.as_deref(),
+                        file_size,
+                    ),
+                );
+            }
+            Some(assets_map)
+        } else {
+            None
+        };
+
+        let mut props = properties.unwrap_or(serde_json::json!({}));
+        if let Some(dt) = datetime {
+            if let serde_json::Value::Object(ref mut map) = props {
+                map.insert("datetime".to_string(), serde_json::json!(dt.to_rfc3339()));
+            }
+        }
+
+        Ok(Some((
+            Feature {
+                feature_type: "Feature".to_string(),
+                id: id.to_string(),
+                geometry: geometry.0,
+                properties: props,
+                links: None,
+                bbox: Some(vec![minx, miny, maxx, maxy]),
+                assets,
+                collection: Some(collection_id.to_string()),
+                stac_version: if has_assets {
+                    Some("1.0.0".to_string())
+                } else {
+                    None
+                },
+                stac_extensions: if has_assets { Some(vec![]) } else { None },
+            },
+            version,
+        )))
+    }
+
     pub async fn get_feature(
         &self,
         username: &str,
@@ -476,19 +608,27 @@ impl FeatureService {
         }
 
         let storage_srid = self.get_storage_srid(&collection).await?;
+        let has_datetime = self.collections.has_datetime(&collection).await?;
+        let has_assets = assets.as_ref().is_some_and(|a| !a.is_empty());
 
-        if assets.as_ref().is_some_and(|a| !a.is_empty()) {
-            self.collections.ensure_assets_table(&collection).await?;
+        // Start transaction as service-role for DDL, then switch to user-role
+        let mut tx = self.db.pool().begin().await?;
+
+        if has_assets {
+            self.collections
+                .ensure_assets_table(&mut *tx, &collection)
+                .await?;
         }
 
-        // Execute as the user to enforce PostgreSQL permissions
-        let mut tx = self.db.begin_as(username).await?;
+        // Get user columns before switching role (information_schema query)
+        let user_columns = self.collections.get_user_columns(&mut *tx, &collection).await?;
+
+        // Switch to user-role to enforce PostgreSQL permissions
+        let set_role_sql = format!("SET LOCAL ROLE {}", quote_ident(username));
+        sqlx::query(&set_role_sql).execute(&mut *tx).await?;
 
         let quoted_schema = quote_ident(&collection.schema_name);
         let quoted_table = quote_ident(&collection.table_name);
-
-        // Get user columns and validate properties
-        let user_columns = self.collections.get_user_columns(&collection).await?;
         if let serde_json::Value::Object(map) = properties {
             for key in map.keys() {
                 if key == "datetime" {
@@ -558,14 +698,22 @@ impl FeatureService {
             .await?;
         }
 
+        // Read back the feature before committing
+        let (feature, version) = Self::read_feature(
+            &mut *tx,
+            &collection,
+            collection_id,
+            feature_id,
+            has_datetime,
+            has_assets,
+        )
+        .await?
+        .context(BadRequest {
+            message: "Could not find newly created feature".to_string(),
+        })?;
+
         tx.commit().await?;
 
-        let (feature, version, _) = self
-            .get_feature(username, collection_id, feature_id, None)
-            .await?
-            .context(BadRequest {
-                message: "Could not find newly created feature".to_string(),
-            })?;
         Ok((feature, version))
     }
 
@@ -592,18 +740,27 @@ impl FeatureService {
         self.check_write_permission(username, &collection).await?;
 
         let storage_srid = self.get_storage_srid(&collection).await?;
+        let has_datetime = self.collections.has_datetime(&collection).await?;
+        let has_assets_input = assets.as_ref().is_some_and(|a| !a.is_empty());
+        let has_assets = has_assets_input || self.collections.has_assets(&collection).await?;
         let quoted_schema = quote_ident(&collection.schema_name);
         let quoted_table = quote_ident(&collection.table_name);
 
-        if assets.as_ref().is_some_and(|a| !a.is_empty()) {
-            self.collections.ensure_assets_table(&collection).await?;
+        // Start transaction as service-role for DDL, then switch to user-role
+        let mut tx = self.db.pool().begin().await?;
+
+        if has_assets_input {
+            self.collections
+                .ensure_assets_table(&mut *tx, &collection)
+                .await?;
         }
 
         // Get user columns for validation
-        let user_columns = self.collections.get_user_columns(&collection).await?;
+        let user_columns = self.collections.get_user_columns(&mut *tx, &collection).await?;
 
-        // Execute as the user to enforce PostgreSQL permissions
-        let mut tx = self.db.begin_as(username).await?;
+        // Switch to user-role to enforce PostgreSQL permissions
+        let set_role_sql = format!("SET LOCAL ROLE {}", quote_ident(username));
+        sqlx::query(&set_role_sql).execute(&mut *tx).await?;
 
         // Lock and check version
         let check_sql = format!(
@@ -734,14 +891,22 @@ impl FeatureService {
             .await?;
         }
 
+        // Read back the feature before committing
+        let (feature, version) = Self::read_feature(
+            &mut *tx,
+            &collection,
+            collection_id,
+            feature_id,
+            has_datetime,
+            has_assets,
+        )
+        .await?
+        .context(BadRequest {
+            message: "Could not find newly updated feature".to_string(),
+        })?;
+
         tx.commit().await?;
 
-        let (feature, version, _) = self
-            .get_feature(username, collection_id, feature_id, None)
-            .await?
-            .context(BadRequest {
-                message: "Could not find newly updated feature".to_string(),
-            })?;
         Ok((feature, version))
     }
 
@@ -765,19 +930,28 @@ impl FeatureService {
             .await?
             .as_collection();
         let storage_srid = self.get_storage_srid(&collection).await?;
+        let has_datetime = self.collections.has_datetime(&collection).await?;
+        let has_assets_input = assets.as_ref().is_some_and(|a| !a.is_empty());
+        let has_assets = has_assets_input || self.collections.has_assets(&collection).await?;
 
-        if assets.as_ref().is_some_and(|a| !a.is_empty()) {
-            self.collections.ensure_assets_table(&collection).await?;
+        // Start transaction as service-role for DDL, then switch to user-role
+        let mut tx = self.db.pool().begin().await?;
+
+        if has_assets_input {
+            self.collections
+                .ensure_assets_table(&mut *tx, &collection)
+                .await?;
         }
 
-        // Execute as the user to enforce PostgreSQL permissions
-        let mut tx = self.db.begin_as(username).await?;
+        // Get user columns and validate properties
+        let user_columns = self.collections.get_user_columns(&mut *tx, &collection).await?;
+
+        // Switch to user-role to enforce PostgreSQL permissions
+        let set_role_sql = format!("SET LOCAL ROLE {}", quote_ident(username));
+        sqlx::query(&set_role_sql).execute(&mut *tx).await?;
 
         let quoted_schema = quote_ident(&collection.schema_name);
         let quoted_table = quote_ident(&collection.table_name);
-
-        // Get user columns and validate properties
-        let user_columns = self.collections.get_user_columns(&collection).await?;
 
         // Check version
         let check_sql = format!(
@@ -891,14 +1065,22 @@ impl FeatureService {
             .await?;
         }
 
+        // Read back the feature before committing
+        let (feature, version) = Self::read_feature(
+            &mut *tx,
+            &collection,
+            collection_id,
+            feature_id,
+            has_datetime,
+            has_assets,
+        )
+        .await?
+        .context(BadRequest {
+            message: "Could not find newly updated feature".to_string(),
+        })?;
+
         tx.commit().await?;
 
-        let (feature, version, _) = self
-            .get_feature(username, collection_id, feature_id, None)
-            .await?
-            .context(BadRequest {
-                message: "Could not find newly updated feature".to_string(),
-            })?;
         Ok((feature, version))
     }
 

@@ -226,7 +226,7 @@ fn get_collection_docs(op: TransformOperation) -> TransformOperation {
 pub async fn create_collection(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State((storage, service, process_service)): State<AppState>,
+    State((storage, service, _process_service)): State<AppState>,
     request: CreateCollectionRequest,
 ) -> AppResult<(
     StatusCode,
@@ -257,22 +257,16 @@ pub async fn create_collection(
         .build());
     }
 
-    let collection = service
-        .create_collection(
-            &user.username,
-            &canonical_name,
-            &owner,
-            &metadata.title,
-            metadata.description.as_deref(),
-            &metadata.collection_type,
-            metadata.crs,
-            metadata.columns.as_deref(),
-        )
-        .await?;
+    // Generate collection UUID upfront so we can reference it in import job inputs
+    let collection_id = Uuid::new_v4();
 
-    if let Some(file) = file {
+    // If a file is present: detect columns and upload to S3 before creating collection
+    let mut columns = metadata.columns.clone();
+    let mut import_job_inputs = None;
+
+    if let Some(ref file) = file {
         // Auto-detect columns from the uploaded file if none were specified
-        if metadata.columns.is_none() {
+        if columns.is_none() {
             let file_data = file.data.clone();
             let filename = file.filename.clone();
             let detected_columns = tokio::task::spawn_blocking(move || {
@@ -287,36 +281,45 @@ pub async fn create_collection(
                 })();
                 std::fs::remove_file(&temp_path).ok();
                 result
-            }).await.ok().flatten();
+            })
+            .await
+            .ok()
+            .flatten();
 
             if let Some(cols) = detected_columns {
-                let _ = service.update_collection(
-                    &user.username,
-                    &collection.canonical_name,
-                    |_| true,
-                    None,
-                    None,
-                    None,
-                    Some(&cols),
-                    None,
-                ).await;
+                columns = Some(cols);
             }
         }
 
+        // Upload to S3 before creating the collection (if upload fails, no DB changes)
         let key = format!("{}-{}", Uuid::new_v4(), file.filename);
-        storage.put(&key, file.data).await?;
-        process_service
-            .create_job(
-                &user.username,
-                "import-vector",
-                &serde_json::to_value(ImportVectorInputs {
-                    collection_id: collection.id.to_string(),
-                    file_key: key,
-                })
-                .unwrap(),
-            )
-            .await?;
+        storage.put(&key, file.data.clone()).await?;
+
+        import_job_inputs = Some(
+            serde_json::to_value(ImportVectorInputs {
+                collection_id: collection_id.to_string(),
+                file_key: key,
+            })
+            .unwrap(),
+        );
     }
+
+    let collection = service
+        .create_collection(
+            collection_id,
+            &user.username,
+            &canonical_name,
+            &owner,
+            &metadata.title,
+            metadata.description.as_deref(),
+            &metadata.collection_type,
+            metadata.crs,
+            columns.as_deref(),
+            import_job_inputs
+                .as_ref()
+                .map(|inputs| (user.username.as_str(), "import-vector", inputs)),
+        )
+        .await?;
 
     let base_url = &config.base_url;
 

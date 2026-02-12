@@ -432,14 +432,16 @@ impl JobWorker {
 
         self.collection_service
             .create_collection(
+                uuid::Uuid::new_v4(),
                 owner,
                 &canonical_name,
                 owner,
                 collection_name, // Use name as title
                 None,
                 collection_type,
-                4326, // Default to WGS84
-                None, // No columns for auto-created collections
+                4326,  // Default to WGS84
+                None,  // No columns for auto-created collections
+                None,  // No import job
             )
             .await
     }
@@ -724,7 +726,7 @@ impl JobWorker {
         let quoted_table = self.quote_ident(&collection.table_name);
 
         // Get user columns to determine insert strategy
-        let user_columns = self.collection_service.get_user_columns(collection).await?;
+        let user_columns = self.collection_service.get_user_columns(&mut **tx, collection).await?;
 
         if user_columns.is_empty() {
             let query = format!(

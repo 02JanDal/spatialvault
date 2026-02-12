@@ -214,6 +214,55 @@ impl CollectionService {
         }
     }
 
+    /// Check if user has SELECT privilege on a collection's table.
+    async fn has_select_privilege(
+        conn: &mut sqlx::PgConnection,
+        username: &str,
+        collection: &Collection,
+    ) -> AppResult<bool> {
+        let result: Option<bool> = sqlx::query_scalar(
+            r#"
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.table_privileges
+                WHERE table_schema = $1
+                  AND table_name = $2
+                  AND grantee = $3
+                  AND privilege_type = 'SELECT'
+            )
+            "#,
+        )
+        .bind(&collection.schema_name)
+        .bind(&collection.table_name)
+        .bind(username)
+        .fetch_one(&mut *conn)
+        .await?;
+        Ok(result.unwrap_or(false))
+    }
+
+    /// Check ownership, returning NotFound if user has no visibility, Forbidden if user can see but doesn't own.
+    fn check_ownership(
+        &self,
+        username: &str,
+        collection: &Collection,
+        has_select: bool,
+    ) -> AppResult<()> {
+        if collection.owner == username {
+            return Ok(());
+        }
+        if has_select {
+            // User can see the collection but is not the owner
+            return Err(Forbidden {
+                message: "Only owner can modify collection".to_string(),
+            }
+            .build());
+        }
+        // User cannot see the collection at all
+        Err(NotFound {
+            message: format!("Collection not found: {}", collection.canonical_name),
+        }
+        .build())
+    }
+
     /// Check if the user has write permission on a collection
     /// Returns true if user is owner or has INSERT privilege
     pub async fn has_write_permission(
@@ -260,6 +309,7 @@ impl CollectionService {
 
     pub async fn create_collection(
         &self,
+        id: Uuid,
         username: &str,
         canonical_name: &str,
         owner: &str,
@@ -268,6 +318,7 @@ impl CollectionService {
         collection_type: &str,
         crs: i32,
         columns: Option<&[ColumnDef]>,
+        import_job: Option<(&str, &str, &serde_json::Value)>,
     ) -> AppResult<Collection> {
         // Ensure user role exists
         let role_manager = RoleManager::new(self.db.pool());
@@ -300,8 +351,6 @@ impl CollectionService {
             }
             .build());
         }
-
-        let id = Uuid::new_v4();
 
         // Start transaction
         let mut tx = self.db.pool().begin().await?;
@@ -393,6 +442,24 @@ impl CollectionService {
             sqlx::query(&create_assets_sql).execute(&mut *tx).await?;
         }
 
+        // Create import job inside the same transaction if requested
+        if let Some((job_username, process_id, inputs)) = import_job {
+            let job_id = Uuid::new_v4();
+            sqlx::query(
+                r#"
+                INSERT INTO spatialvault.processes_jobs
+                (id, process_id, owner, inputs)
+                VALUES ($1, $2, $3, $4)
+                "#,
+            )
+            .bind(job_id)
+            .bind(process_id)
+            .bind(job_username)
+            .bind(inputs)
+            .execute(&mut *tx)
+            .await?;
+        }
+
         tx.commit().await?;
 
         Ok(collection)
@@ -412,29 +479,32 @@ impl CollectionService {
     where
         Matches: FnOnce(i64) -> bool,
     {
-        // First check if user can see the collection (visibility check)
-        // This returns 404 for non-visible collections
-        let _ = self.get_collection(username, collection_id).await?;
-
         let mut tx = self.db.pool().begin().await?;
 
         // Get current collection with version check
-        let current: Collection = sqlx::query_as(
+        let current: Option<Collection> = sqlx::query_as(
             "SELECT * FROM spatialvault.collections WHERE canonical_name = $1 FOR UPDATE",
         )
         .bind(collection_id)
         .fetch_optional(&mut *tx)
-        .await?
-        .context(NotFound {
-            message: format!("Collection not found: {}", collection_id),
-        })?;
+        .await?;
+
+        let current = match current {
+            Some(c) => c,
+            None => {
+                self.check_alias(collection_id).await?;
+                return Err(NotFound {
+                    message: format!("Collection not found: {}", collection_id),
+                }
+                .build());
+            }
+        };
 
         // Check ownership (only owner can update)
         if current.owner != username {
-            return Err(Forbidden {
-                message: "Only owner can update collection".to_string(),
-            }
-            .build());
+            let has_select =
+                Self::has_select_privilege(&mut *tx, username, &current).await?;
+            self.check_ownership(username, &current, has_select)?;
         }
 
         // Check version if If-Match header was provided
@@ -486,7 +556,7 @@ impl CollectionService {
         if let Some(cols) = add_columns {
             let quoted_schema = quote_ident(&current.schema_name);
             let quoted_table = quote_ident(&current.table_name);
-            let existing = self.get_user_columns(&current).await?;
+            let existing = self.get_user_columns(&mut *tx, &current).await?;
 
             for col in cols {
                 validate_column_name(&col.name)?;
@@ -562,29 +632,32 @@ impl CollectionService {
     where
         Matches: Fn(i64) -> bool,
     {
-        // First check if user can see the collection (visibility check)
-        // This returns 404 for non-visible collections
-        let _ = self.get_collection(username, collection_id).await?;
-
         let mut tx = self.db.pool().begin().await?;
 
         // Get current collection with version check
-        let current: Collection = sqlx::query_as(
+        let current: Option<Collection> = sqlx::query_as(
             "SELECT * FROM spatialvault.collections WHERE canonical_name = $1 FOR UPDATE",
         )
         .bind(collection_id)
         .fetch_optional(&mut *tx)
-        .await?
-        .context(NotFound {
-            message: format!("Collection not found: {}", collection_id),
-        })?;
+        .await?;
+
+        let current = match current {
+            Some(c) => c,
+            None => {
+                self.check_alias(collection_id).await?;
+                return Err(NotFound {
+                    message: format!("Collection not found: {}", collection_id),
+                }
+                .build());
+            }
+        };
 
         // Check ownership first (before version check for proper error ordering)
         if current.owner != username {
-            return Err(Forbidden {
-                message: "Only owner can update collection".to_string(),
-            }
-            .build());
+            let has_select =
+                Self::has_select_privilege(&mut *tx, username, &current).await?;
+            self.check_ownership(username, &current, has_select)?;
         }
 
         // Check version if If-Match header was provided
@@ -618,7 +691,7 @@ impl CollectionService {
         if let Some(cols) = columns {
             let quoted_schema = quote_ident(&current.schema_name);
             let quoted_table = quote_ident(&current.table_name);
-            let existing = self.get_user_columns(&current).await?;
+            let existing = self.get_user_columns(&mut *tx, &current).await?;
 
             // Validate all new column names first
             for col in cols {
@@ -688,28 +761,31 @@ impl CollectionService {
     where
         Matches: Fn(i64) -> bool,
     {
-        // First check if user can see the collection (visibility check)
-        // This returns 404 for non-visible collections
-        let _ = self.get_collection(username, collection_id).await?;
-
         let mut tx = self.db.pool().begin().await?;
 
-        let collection: Collection = sqlx::query_as(
+        let collection: Option<Collection> = sqlx::query_as(
             "SELECT * FROM spatialvault.collections WHERE canonical_name = $1 FOR UPDATE",
         )
         .bind(collection_id)
         .fetch_optional(&mut *tx)
-        .await?
-        .context(NotFound {
-            message: format!("Collection not found: {}", collection_id),
-        })?;
+        .await?;
+
+        let collection = match collection {
+            Some(c) => c,
+            None => {
+                self.check_alias(collection_id).await?;
+                return Err(NotFound {
+                    message: format!("Collection not found: {}", collection_id),
+                }
+                .build());
+            }
+        };
 
         // Check ownership (only owner can delete)
         if collection.owner != username {
-            return Err(Forbidden {
-                message: "Only owner can delete collection".to_string(),
-            }
-            .build());
+            let has_select =
+                Self::has_select_privilege(&mut *tx, username, &collection).await?;
+            self.check_ownership(username, &collection, has_select)?;
         }
 
         // Check version if If-Match header was provided
@@ -794,12 +870,15 @@ impl CollectionService {
     }
 
     /// Create the assets table for a collection if it doesn't already exist.
-    /// Uses the service-role pool so it works even when the caller's transaction
-    /// runs as a non-schema-owner, and sets table ownership so the collection
-    /// owner can INSERT/DELETE in their user-role transaction.
-    pub async fn ensure_assets_table(&self, collection: &Collection) -> AppResult<()> {
+    /// Must be called on a service-role connection (before SET LOCAL ROLE)
+    /// so DDL runs with sufficient privileges.
+    pub async fn ensure_assets_table(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        collection: &Collection,
+    ) -> AppResult<()> {
         let sql = create_assets_table_sql(&collection.schema_name, &collection.table_name);
-        sqlx::query(&sql).execute(self.db.pool()).await?;
+        sqlx::query(&sql).execute(&mut *conn).await?;
 
         let alter_owner_sql = format!(
             "ALTER TABLE {}.{} OWNER TO {}",
@@ -808,7 +887,7 @@ impl CollectionService {
             quote_ident(&collection.owner),
         );
         sqlx::query(&alter_owner_sql)
-            .execute(self.db.pool())
+            .execute(&mut *conn)
             .await?;
 
         Ok(())
@@ -1004,7 +1083,11 @@ impl CollectionService {
     }
 
     /// Get user-defined columns (excludes system columns and geometry)
-    pub async fn get_user_columns(&self, collection: &Collection) -> AppResult<Vec<ColumnInfo>> {
+    pub async fn get_user_columns(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        collection: &Collection,
+    ) -> AppResult<Vec<ColumnInfo>> {
         let rows: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
             r#"
             SELECT column_name, data_type, is_nullable, column_default
@@ -1015,7 +1098,7 @@ impl CollectionService {
         )
         .bind(&collection.schema_name)
         .bind(&collection.table_name)
-        .fetch_all(self.db.pool())
+        .fetch_all(&mut *conn)
         .await?;
 
         Ok(rows
