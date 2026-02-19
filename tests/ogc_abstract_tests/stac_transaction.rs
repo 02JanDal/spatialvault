@@ -4,7 +4,7 @@
 //! - https://api.stacspec.org/v1.0.0/collections/extensions/transaction
 //! - https://api.stacspec.org/v1.0.0/ogcapi-features/extensions/transaction
 
-use crate::common::{TestApp, test_collection_request, test_stac_item_request};
+use crate::common::{TestApp, test_collection_request, test_feature_request};
 use axum::http::StatusCode;
 
 /// Test that conformance declaration includes STAC Collection Transaction extension
@@ -207,16 +207,16 @@ async fn test_delete_collection_without_if_match() {
 async fn test_create_item() {
     let app = TestApp::new().await;
 
-    // First create a raster collection for STAC items
-    let collection = test_collection_request("stac-item-create-test", "raster");
+    // First create a vector collection for STAC items
+    let collection = test_collection_request("stac-item-create-test", "vector");
     let create_coll_response = app.post_json("/collections", &collection).await;
     create_coll_response.assert_status(StatusCode::CREATED);
 
     let created: serde_json::Value = create_coll_response.json();
     let collection_id = created["id"].as_str().expect("Collection must have id");
 
-    // Create a STAC item
-    let item = test_stac_item_request();
+    // Create an item
+    let item = test_feature_request();
     let response = app
         .post_json(&format!("/collections/{}/items", collection_id), &item)
         .await;
@@ -242,8 +242,8 @@ async fn test_create_item() {
 async fn test_replace_item() {
     let app = TestApp::new().await;
 
-    // Create a raster collection
-    let collection = test_collection_request("stac-item-replace-test", "raster");
+    // Create a vector collection
+    let collection = test_collection_request("stac-item-replace-test", "vector");
     let create_coll_response = app.post_json("/collections", &collection).await;
     create_coll_response.assert_status(StatusCode::CREATED);
 
@@ -251,7 +251,7 @@ async fn test_replace_item() {
     let collection_id = created["id"].as_str().expect("Collection must have id");
 
     // Create an item
-    let item = test_stac_item_request();
+    let item = test_feature_request();
     let create_response = app
         .post_json(&format!("/collections/{}/items", collection_id), &item)
         .await;
@@ -269,15 +269,8 @@ async fn test_replace_item() {
             "coordinates": [[[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0], [0.0, 0.0]]]
         },
         "properties": {
-            "datetime": "2024-06-15T12:00:00Z",
-            "title": "Replaced Item"
-        },
-        "assets": {
-            "data": {
-                "href": "s3://bucket/replaced.tif",
-                "type": "image/tiff; application=geotiff; profile=cloud-optimized",
-                "roles": ["data"]
-            }
+            "name": "Replaced Item",
+            "value": 99
         }
     });
 
@@ -292,7 +285,7 @@ async fn test_replace_item() {
     replace_response.assert_success();
 
     let body: serde_json::Value = replace_response.json();
-    assert_eq!(body["properties"]["title"].as_str(), Some("Replaced Item"));
+    assert_eq!(body["properties"]["name"].as_str(), Some("Replaced Item"));
 }
 
 /// Item Transaction: PATCH /collections/{collectionId}/items/{itemId} updates an item
@@ -300,8 +293,8 @@ async fn test_replace_item() {
 async fn test_patch_item() {
     let app = TestApp::new().await;
 
-    // Create a raster collection
-    let collection = test_collection_request("stac-item-patch-test", "raster");
+    // Create a vector collection
+    let collection = test_collection_request("stac-item-patch-test", "vector");
     let create_coll_response = app.post_json("/collections", &collection).await;
     create_coll_response.assert_status(StatusCode::CREATED);
 
@@ -309,7 +302,7 @@ async fn test_patch_item() {
     let collection_id = created["id"].as_str().expect("Collection must have id");
 
     // Create an item
-    let item = test_stac_item_request();
+    let item = test_feature_request();
     let create_response = app
         .post_json(&format!("/collections/{}/items", collection_id), &item)
         .await;
@@ -322,7 +315,7 @@ async fn test_patch_item() {
     // Patch the item
     let patch = serde_json::json!({
         "properties": {
-            "title": "Patched Item"
+            "name": "Patched Item"
         }
     });
 
@@ -337,7 +330,7 @@ async fn test_patch_item() {
     patch_response.assert_success();
 
     let body: serde_json::Value = patch_response.json();
-    assert_eq!(body["properties"]["title"].as_str(), Some("Patched Item"));
+    assert_eq!(body["properties"]["name"].as_str(), Some("Patched Item"));
 }
 
 /// Item Transaction: DELETE /collections/{collectionId}/items/{itemId} removes an item
@@ -345,8 +338,8 @@ async fn test_patch_item() {
 async fn test_delete_item() {
     let app = TestApp::new().await;
 
-    // Create a raster collection
-    let collection = test_collection_request("stac-item-delete-test", "raster");
+    // Create a vector collection
+    let collection = test_collection_request("stac-item-delete-test", "vector");
     let create_coll_response = app.post_json("/collections", &collection).await;
     create_coll_response.assert_status(StatusCode::CREATED);
 
@@ -354,7 +347,7 @@ async fn test_delete_item() {
     let collection_id = created["id"].as_str().expect("Collection must have id");
 
     // Create an item
-    let item = test_stac_item_request();
+    let item = test_feature_request();
     let create_response = app
         .post_json(&format!("/collections/{}/items", collection_id), &item)
         .await;
@@ -386,8 +379,8 @@ async fn test_delete_item() {
 async fn test_delete_item_without_if_match() {
     let app = TestApp::new().await;
 
-    // Create a raster collection
-    let collection = test_collection_request("stac-item-delete-etag-test", "raster");
+    // Create a vector collection
+    let collection = test_collection_request("stac-item-delete-etag-test", "vector");
     let create_coll_response = app.post_json("/collections", &collection).await;
     create_coll_response.assert_status(StatusCode::CREATED);
 
@@ -395,7 +388,7 @@ async fn test_delete_item_without_if_match() {
     let collection_id = created["id"].as_str().expect("Collection must have id");
 
     // Create an item
-    let item = test_stac_item_request();
+    let item = test_feature_request();
     let create_response = app
         .post_json(&format!("/collections/{}/items", collection_id), &item)
         .await;

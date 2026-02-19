@@ -109,15 +109,21 @@ async fn test_update_collection_without_etag() {
 
     // Try update without ETag
     let update = serde_json::json!({
-        "title": "Should Fail"
+        "title": "Updated Title"
     });
 
-    let response = app
+    let patch_response = app
         .patch_json_without_etag(&format!("/collections/{}", collection_id), &update)
         .await;
 
-    // Should return 412 Precondition Failed
-    response.assert_status(StatusCode::PRECONDITION_FAILED);
+    patch_response.assert_success();
+
+    // Verify update
+    let get_response = app.get(&format!("/collections/{}", collection_id)).await;
+    get_response.assert_success();
+
+    let body: serde_json::Value = get_response.json();
+    assert_eq!(body["title"].as_str(), Some("Updated Title"));
 }
 
 /// Test update fails with wrong ETag

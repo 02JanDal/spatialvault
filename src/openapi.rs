@@ -1,6 +1,6 @@
 use crate::api::collections::CreateCollection;
 use crate::api::collections::schemas::{
-    CollectionResponse, CollectionsResponse, CreateCollectionRequest, UpdateCollectionRequest,
+    CollectionResponse, CollectionsResponse, UpdateCollectionRequest,
 };
 use crate::api::common::{Extent, Link};
 use crate::api::features::handlers::{Feature, FeatureCollection};

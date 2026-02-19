@@ -3,6 +3,7 @@ use super::schemas::{
     ListCollectionsParams, UpdateCollectionRequest,
 };
 use crate::api::collections::CreateCollection;
+use crate::api::common;
 use crate::api::common::{Extent, Link, Location, crs, etag, media_type, rel};
 use crate::api::processes::import_vector::ImportVectorInputs;
 use crate::auth::AuthenticatedUser;
@@ -362,6 +363,7 @@ pub async fn patch_collection(
     State((_storage, service, _process_service)): State<AppState>,
     path: CollectionPath,
     if_match: Option<TypedHeader<IfMatch>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<UpdateCollectionRequest>,
 ) -> AppResult<(StatusCode, TypedHeader<ETag>, Json<CollectionResponse>)> {
     let collection_id = path.collection_id;
@@ -370,7 +372,7 @@ pub async fn patch_collection(
         .update_collection(
             &user.username,
             &collection_id,
-            &if_match,
+            &common::fix_header(headers, if_match),
             request.title.as_deref(),
             request.description.as_deref(),
             request.id.as_deref(),
@@ -414,6 +416,7 @@ pub async fn update_collection(
     State((_storage, service, _process_service)): State<AppState>,
     path: CollectionPath,
     if_match: Option<TypedHeader<IfMatch>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<CreateCollection>,
 ) -> AppResult<(StatusCode, TypedHeader<ETag>, Json<CollectionResponse>)> {
     let collection_id = path.collection_id;
@@ -436,7 +439,7 @@ pub async fn update_collection(
         .replace_collection(
             &user.username,
             &collection_id,
-            &if_match,
+            &common::fix_header(headers, if_match),
             &request.title,
             request.description.as_deref(),
             request.columns.as_deref(),
@@ -478,9 +481,14 @@ pub async fn delete_collection(
     State((_storage, service, _process_service)): State<AppState>,
     path: CollectionPath,
     if_match: Option<TypedHeader<IfMatch>>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<StatusCode> {
     service
-        .delete_collection(&user.username, &path.collection_id, &if_match)
+        .delete_collection(
+            &user.username,
+            &path.collection_id,
+            &common::fix_header(headers, if_match),
+        )
         .await?;
 
     Ok(StatusCode::NO_CONTENT)

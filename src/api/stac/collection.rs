@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::api::common::{Assets, Extent, Link};
+use crate::api::common::{Extent, Link};
 
 /// STAC Collection
 #[derive(Debug, Serialize, JsonSchema)]

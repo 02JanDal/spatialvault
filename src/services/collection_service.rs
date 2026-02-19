@@ -1,4 +1,3 @@
-use std::cmp::PartialEq;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -495,8 +494,7 @@ impl CollectionService {
         new_name: Option<&str>,
         add_columns: Option<&[ColumnDef]>,
         remove_columns: Option<&[String]>,
-    ) -> AppResult<Collection>
-    {
+    ) -> AppResult<Collection> {
         let mut tx = self.db.pool().begin().await?;
 
         // Get current collection with version check
@@ -520,8 +518,7 @@ impl CollectionService {
 
         // Check ownership (only owner can update)
         if current.owner != username {
-            let has_select =
-                Self::has_select_privilege(&mut *tx, username, &current).await?;
+            let has_select = Self::has_select_privilege(&mut *tx, username, &current).await?;
             self.check_ownership(username, &current, has_select)?;
         }
 
@@ -646,8 +643,7 @@ impl CollectionService {
         title: &str,
         description: Option<&str>,
         columns: Option<&[ColumnDef]>,
-    ) -> AppResult<Collection>
-    {
+    ) -> AppResult<Collection> {
         let mut tx = self.db.pool().begin().await?;
 
         // Get current collection with version check
@@ -671,8 +667,7 @@ impl CollectionService {
 
         // Check ownership first (before version check for proper error ordering)
         if current.owner != username {
-            let has_select =
-                Self::has_select_privilege(&mut *tx, username, &current).await?;
+            let has_select = Self::has_select_privilege(&mut *tx, username, &current).await?;
             self.check_ownership(username, &current, has_select)?;
         }
 
@@ -773,8 +768,7 @@ impl CollectionService {
         username: &str,
         collection_id: &str,
         matches: &impl VersionMatch,
-    ) -> AppResult<()>
-    {
+    ) -> AppResult<()> {
         let mut tx = self.db.pool().begin().await?;
 
         let collection: Option<Collection> = sqlx::query_as(
@@ -797,8 +791,7 @@ impl CollectionService {
 
         // Check ownership (only owner can delete)
         if collection.owner != username {
-            let has_select =
-                Self::has_select_privilege(&mut *tx, username, &collection).await?;
+            let has_select = Self::has_select_privilege(&mut *tx, username, &collection).await?;
             self.check_ownership(username, &collection, has_select)?;
         }
 
@@ -900,9 +893,7 @@ impl CollectionService {
             quote_ident(&format!("_{}_assets", collection.table_name)),
             quote_ident(&collection.owner),
         );
-        sqlx::query(&alter_owner_sql)
-            .execute(&mut *conn)
-            .await?;
+        sqlx::query(&alter_owner_sql).execute(&mut *conn).await?;
 
         Ok(())
     }

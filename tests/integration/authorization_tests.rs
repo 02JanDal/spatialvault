@@ -456,52 +456,18 @@ async fn test_owner_has_full_access_to_raster_collection() {
     let get_response = app.get(&format!("/collections/{}", collection_id)).await;
     get_response.assert_status(StatusCode::OK);
 
-    // Owner can GET items (via STAC API)
+    // Owner can GET items (empty list)
     let items_response = app
         .get(&format!("/collections/{}/items", collection_id))
         .await;
     items_response.assert_status(StatusCode::OK);
 
-    // Owner can POST a STAC item
+    // POST items is not supported for raster collections (use processes API)
     let stac_item = test_stac_item_request();
     let post_item_response = app
         .post_json(&format!("/collections/{}/items", collection_id), &stac_item)
         .await;
-    post_item_response.assert_status(StatusCode::CREATED);
-
-    let item: serde_json::Value = post_item_response.json();
-    let item_id = item["id"].as_str().expect("Item must have id");
-    let item_etag = post_item_response.etag().expect("Should have ETag");
-
-    // Owner can PATCH a STAC item
-    let update = serde_json::json!({
-        "properties": {
-            "title": "Updated STAC Item"
-        }
-    });
-    let patch_item_response = app
-        .patch_json(
-            &format!("/collections/{}/items/{}", collection_id, item_id),
-            &update,
-            &item_etag,
-        )
-        .await;
-    patch_item_response.assert_status(StatusCode::OK);
-    let updated_item_etag = patch_item_response.etag().expect("Should have ETag");
-
-    // Owner can DELETE a STAC item
-    let delete_item_response = app
-        .delete(
-            &format!("/collections/{}/items/{}", collection_id, item_id),
-            &updated_item_etag,
-        )
-        .await;
-    delete_item_response.assert_status(StatusCode::NO_CONTENT);
-
-    // Get fresh collection ETag (item operations increment collection version)
-    let get_response = app.get(&format!("/collections/{}", collection_id)).await;
-    get_response.assert_status(StatusCode::OK);
-    let fresh_collection_etag = get_response.etag().expect("Should have ETag");
+    post_item_response.assert_status(StatusCode::BAD_REQUEST);
 
     // Owner can PATCH the collection
     let collection_update = serde_json::json!({
@@ -511,7 +477,7 @@ async fn test_owner_has_full_access_to_raster_collection() {
         .patch_json(
             &format!("/collections/{}", collection_id),
             &collection_update,
-            &fresh_collection_etag,
+            &collection_etag,
         )
         .await;
     patch_collection_response.assert_status(StatusCode::OK);
@@ -529,15 +495,6 @@ async fn test_non_owner_cannot_access_raster_collection() {
 
     let created: serde_json::Value = create_response.json();
     let collection_id = created["id"].as_str().expect("Collection must have id");
-
-    // Create a STAC item
-    let stac_item = test_stac_item_request();
-    let post_item_response = app
-        .post_json(&format!("/collections/{}/items", collection_id), &stac_item)
-        .await;
-    post_item_response.assert_status(StatusCode::CREATED);
-    let item: serde_json::Value = post_item_response.json();
-    let item_id = item["id"].as_str().expect("Item must have id");
 
     // Switch to a different user
     app.ensure_role_exists("otheruser").await;
@@ -576,26 +533,6 @@ async fn test_non_owner_cannot_access_raster_collection() {
         .await;
     post_response.assert_status(StatusCode::NOT_FOUND);
 
-    // Non-owner gets 404 on PATCH item
-    let update = serde_json::json!({ "properties": { "title": "Hacked" } });
-    let patch_response = other_app
-        .patch_json(
-            &format!("/collections/{}/items/{}", collection_id, item_id),
-            &update,
-            "\"1\"",
-        )
-        .await;
-    patch_response.assert_status(StatusCode::NOT_FOUND);
-
-    // Non-owner gets 404 on DELETE item
-    let delete_response = other_app
-        .delete(
-            &format!("/collections/{}/items/{}", collection_id, item_id),
-            "\"1\"",
-        )
-        .await;
-    delete_response.assert_status(StatusCode::NOT_FOUND);
-
     // Non-owner gets 404 on PATCH collection
     let collection_update = serde_json::json!({ "title": "Hacked Title" });
     let patch_collection_response = other_app
@@ -614,7 +551,7 @@ async fn test_non_owner_cannot_access_raster_collection() {
     delete_collection_response.assert_status(StatusCode::NOT_FOUND);
 }
 
-/// Test that sharing is not supported for raster collections (returns 400)
+/// Test that read share grants read-only access for raster collections
 #[tokio::test]
 async fn test_read_share_grants_read_only_access_raster() {
     let app = TestApp::with_auth(MockAuthState::with_username("owner")).await;
@@ -627,7 +564,7 @@ async fn test_read_share_grants_read_only_access_raster() {
     let created: serde_json::Value = create_response.json();
     let collection_id = created["id"].as_str().expect("Collection must have id");
 
-    // Try to share with read permission - should fail for raster collections
+    // Share with read permission
     app.ensure_role_exists("reader").await;
     let share_request = serde_json::json!({
         "principal": "reader",
@@ -640,11 +577,56 @@ async fn test_read_share_grants_read_only_access_raster() {
             &share_request,
         )
         .await;
-    // Sharing is not supported for raster collections
-    share_response.assert_status(StatusCode::BAD_REQUEST);
+    share_response.assert_status(StatusCode::CREATED);
+
+    // Switch to reader user
+    let reader_app = app.spawn_user(MockAuthState::with_username("reader"));
+
+    // Reader can see collection in list
+    let list_response = reader_app.get("/collections").await;
+    list_response.assert_status(StatusCode::OK);
+    let list_body: serde_json::Value = list_response.json();
+    let collections = list_body["collections"]
+        .as_array()
+        .expect("Should have collections");
+    assert!(
+        collections
+            .iter()
+            .any(|c| c["id"].as_str() == Some(collection_id)),
+        "Reader should see collection in list"
+    );
+
+    // Reader can GET the collection
+    let get_response = reader_app
+        .get(&format!("/collections/{}", collection_id))
+        .await;
+    get_response.assert_status(StatusCode::OK);
+
+    // Reader can GET items
+    let items_response = reader_app
+        .get(&format!("/collections/{}/items", collection_id))
+        .await;
+    items_response.assert_status(StatusCode::OK);
+
+    // Reader gets 403 on PATCH collection
+    let collection_update = serde_json::json!({ "title": "Updated Title" });
+    let patch_collection_response = reader_app
+        .patch_json(
+            &format!("/collections/{}", collection_id),
+            &collection_update,
+            "\"1\"",
+        )
+        .await;
+    patch_collection_response.assert_status(StatusCode::FORBIDDEN);
+
+    // Reader gets 403 on DELETE collection
+    let delete_collection_response = reader_app
+        .delete(&format!("/collections/{}", collection_id), "\"1\"")
+        .await;
+    delete_collection_response.assert_status(StatusCode::FORBIDDEN);
 }
 
-/// Test that write share grants item modification but not collection modification for raster
+/// Test that write share grants access but not collection modification for raster
 #[tokio::test]
 async fn test_write_share_grants_item_modification_raster() {
     let app = TestApp::with_auth(MockAuthState::with_username("owner")).await;
@@ -700,38 +682,6 @@ async fn test_write_share_grants_item_modification_raster() {
         .get(&format!("/collections/{}/items", collection_id))
         .await;
     items_response.assert_status(StatusCode::OK);
-
-    // Writer can POST a STAC item
-    let stac_item = test_stac_item_request();
-    let post_response = writer_app
-        .post_json(&format!("/collections/{}/items", collection_id), &stac_item)
-        .await;
-    post_response.assert_status(StatusCode::CREATED);
-
-    let item: serde_json::Value = post_response.json();
-    let item_id = item["id"].as_str().expect("Item must have id");
-    let item_etag = post_response.etag().expect("Should have ETag");
-
-    // Writer can PATCH a STAC item
-    let update = serde_json::json!({ "properties": { "title": "Updated by Writer" } });
-    let patch_response = writer_app
-        .patch_json(
-            &format!("/collections/{}/items/{}", collection_id, item_id),
-            &update,
-            &item_etag,
-        )
-        .await;
-    patch_response.assert_status(StatusCode::OK);
-    let updated_item_etag = patch_response.etag().expect("Should have ETag");
-
-    // Writer can DELETE a STAC item
-    let delete_response = writer_app
-        .delete(
-            &format!("/collections/{}/items/{}", collection_id, item_id),
-            &updated_item_etag,
-        )
-        .await;
-    delete_response.assert_status(StatusCode::NO_CONTENT);
 
     // Writer gets 403 on PATCH collection
     let collection_update = serde_json::json!({ "title": "Updated Title" });

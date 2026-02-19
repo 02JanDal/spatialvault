@@ -144,7 +144,7 @@ pub struct CollectionTilesPath {
 pub async fn get_tileset(
     Extension(config): Extension<Arc<Config>>,
     Extension(user): Extension<AuthenticatedUser>,
-    State((service, collection_service)): State<(Arc<TileService>, Arc<CollectionService>)>,
+    State((_service, collection_service)): State<(Arc<TileService>, Arc<CollectionService>)>,
     path: CollectionTilesPath,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;

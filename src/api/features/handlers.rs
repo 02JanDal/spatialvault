@@ -1,6 +1,7 @@
 use super::crs::{ContentCrs, parse_crs_param};
 use super::query::FeatureQueryParams;
 use super::schemas::{CreateFeaturePayload, UpdateFeaturePayload, resolve_asset_uploads};
+use crate::api::common;
 use crate::api::common::Location;
 use crate::api::common::{Assets, GeoJsonGeometry, Link, etag, media_type, rel};
 use crate::auth::AuthenticatedUser;
@@ -336,6 +337,7 @@ pub async fn update_feature(
     State((storage, service)): State<FeatureState>,
     path: FeaturePath,
     if_match: Option<TypedHeader<IfMatch>>,
+    headers: axum::http::HeaderMap,
     payload: UpdateFeaturePayload,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
@@ -362,7 +364,7 @@ pub async fn update_feature(
             &user.username,
             &collection_id,
             feature_id,
-            &if_match,
+            &common::fix_header(headers, if_match),
             request.geometry,
             request.properties,
             datetime,
@@ -389,6 +391,7 @@ pub async fn replace_feature(
     State((storage, service)): State<FeatureState>,
     path: FeaturePath,
     if_match: Option<TypedHeader<IfMatch>>,
+    headers: axum::http::HeaderMap,
     payload: CreateFeaturePayload,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
@@ -413,7 +416,7 @@ pub async fn replace_feature(
             &user.username,
             &collection_id,
             feature_id,
-            &if_match,
+            &common::fix_header(headers, if_match),
             request.geometry,
             request.properties,
             datetime,
@@ -440,12 +443,18 @@ pub async fn delete_feature(
     State((_storage, service)): State<FeatureState>,
     path: FeaturePath,
     if_match: Option<TypedHeader<IfMatch>>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
     let feature_id = path.feature_id;
 
     service
-        .delete_feature(&user.username, &collection_id, feature_id, &if_match)
+        .delete_feature(
+            &user.username,
+            &collection_id,
+            feature_id,
+            &common::fix_header(headers, if_match),
+        )
         .await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())

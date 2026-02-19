@@ -1,9 +1,10 @@
 use axum::extract::{FromRequest, Multipart, Request};
-use axum::http::header::CONTENT_TYPE;
+use axum::http::header::{CONTENT_TYPE, IF_MATCH};
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum::response::IntoResponse;
+use axum_extra::TypedHeader;
+use axum_extra::headers::{Error, Header, IfMatch};
 use bytes::Bytes;
-use axum_extra::headers::{Error, Header};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -386,5 +387,21 @@ mod tests {
     fn matches_returns_false_when_version_differs() {
         let if_match = make_if_match(42);
         assert!(!if_match.matches(99));
+    }
+}
+
+/**
+ * axum's TypedHeader will return an empty string rather than a None if the header is missing, which
+ * causes issues downstream. This function checks if the raw header is present and returns None if
+ * not, allowing us to properly handle the case where the header is missing.
+ */
+pub fn fix_header(
+    headers: axum::http::HeaderMap,
+    if_match: Option<TypedHeader<IfMatch>>,
+) -> Option<TypedHeader<IfMatch>> {
+    if headers.contains_key(IF_MATCH) {
+        if_match
+    } else {
+        None
     }
 }

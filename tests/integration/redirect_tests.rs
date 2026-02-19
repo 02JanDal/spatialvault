@@ -105,7 +105,7 @@ async fn test_active_collection_takes_priority_over_alias() {
     // If rename is supported, an alias is created
     if rename_response.status == StatusCode::OK {
         let renamed: serde_json::Value = rename_response.json();
-        let new_id = renamed["id"].as_str().expect("Should have new id");
+        let _new_id = renamed["id"].as_str().expect("Should have new id");
 
         // Now create a NEW collection with the OLD name (the alias source)
         let collection2 = test_collection_request("alias-test-1", "vector");
