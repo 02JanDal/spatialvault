@@ -98,6 +98,38 @@ fn create_assets_table_sql(schema_name: &str, table_name: &str) -> String {
     )
 }
 
+/// Parse a canonical collection name into (schema_name, table_name).
+/// Returns an error if the name has fewer than two colon-separated segments
+/// or if either derived name fails validation.
+fn parse_canonical_name(canonical_name: &str) -> AppResult<(String, String)> {
+    let parts: Vec<&str> = canonical_name.split(':').collect();
+    let schema_name = parts.first().context(BadRequest {
+        message: "Invalid collection name".to_string(),
+    })?;
+    let table_name = parts[1..].join("_");
+
+    if table_name.is_empty() {
+        return Err(BadRequest {
+            message: "Collection name must have at least two segments".to_string(),
+        }
+        .build());
+    }
+    if !is_valid_role_name(schema_name) {
+        return Err(BadRequest {
+            message: format!("Invalid schema name: {}", schema_name),
+        }
+        .build());
+    }
+    if !is_valid_role_name(&table_name) {
+        return Err(BadRequest {
+            message: format!("Invalid table name: {}", table_name),
+        }
+        .build());
+    }
+
+    Ok((schema_name.to_string(), table_name))
+}
+
 pub struct CollectionService {
     db: Arc<Database>,
     base_url: String,
@@ -344,32 +376,8 @@ impl CollectionService {
         role_manager.ensure_user_role(owner).await?;
 
         // Parse canonical name to get schema and table name
-        let parts: Vec<&str> = canonical_name.split(':').collect();
-        let schema_name = parts.first().context(BadRequest {
-            message: "Invalid collection name".to_string(),
-        })?;
-        let table_name = parts[1..].join("_");
-
-        if table_name.is_empty() {
-            return Err(BadRequest {
-                message: "Collection name must have at least two segments".to_string(),
-            }
-            .build());
-        }
-
-        // Validate schema and table names to prevent SQL injection
-        if !is_valid_role_name(schema_name) {
-            return Err(BadRequest {
-                message: format!("Invalid schema name: {}", schema_name),
-            }
-            .build());
-        }
-        if !is_valid_role_name(&table_name) {
-            return Err(BadRequest {
-                message: format!("Invalid table name: {}", table_name),
-            }
-            .build());
-        }
+        let (schema_name, table_name) = parse_canonical_name(canonical_name)?;
+        let schema_name = schema_name.as_str();
 
         // Start transaction
         let mut tx = self.db.pool().begin().await?;
@@ -533,21 +541,31 @@ impl CollectionService {
         // Determine final canonical name
         let final_name = new_name.unwrap_or(collection_id);
 
+        // Derive new table_name from the new canonical name if renaming
+        let new_table_name = if let Some(name) = new_name {
+            let (_, tbl) = parse_canonical_name(name)?;
+            Some(tbl)
+        } else {
+            None
+        };
+
         // Update collection first (must happen before alias insert due to FK constraint)
         let collection: Collection = sqlx::query_as(
             r#"
             UPDATE spatialvault.collections
             SET
                 canonical_name = $1,
-                title = COALESCE($2, title),
-                description = COALESCE($3, description),
+                table_name = COALESCE($2, table_name),
+                title = COALESCE($3, title),
+                description = COALESCE($4, description),
                 version = version + 1,
                 updated_at = NOW()
-            WHERE id = $4
+            WHERE id = $5
             RETURNING *
             "#,
         )
         .bind(final_name)
+        .bind(new_table_name.as_deref())
         .bind(title)
         .bind(description)
         .bind(current.id)
@@ -555,7 +573,7 @@ impl CollectionService {
         .await?;
 
         // Create alias from old name after the canonical_name has been updated
-        if new_name.is_some() {
+        if let Some(ref new_tbl) = new_table_name {
             sqlx::query(
                 "INSERT INTO spatialvault.collection_aliases (old_name, new_name) VALUES ($1, $2)",
             )
@@ -563,12 +581,39 @@ impl CollectionService {
             .bind(final_name)
             .execute(&mut *tx)
             .await?;
+
+            // Rename the underlying PostgreSQL tables to match the new name
+            let quoted_schema = quote_ident(&current.schema_name);
+            let quoted_old_table = quote_ident(&current.table_name);
+            let quoted_new_table = quote_ident(new_tbl);
+
+            sqlx::query(&format!(
+                "ALTER TABLE {}.{} RENAME TO {}",
+                quoted_schema, quoted_old_table, quoted_new_table
+            ))
+            .execute(&mut *tx)
+            .await?;
+
+            // Rename the assets table too (only created for raster/pointcloud collections)
+            if current.collection_type == "raster" || current.collection_type == "pointcloud" {
+                let quoted_old_assets =
+                    quote_ident(&format!("_{}_assets", current.table_name));
+                let quoted_new_assets = quote_ident(&format!("_{}_assets", new_tbl));
+
+                sqlx::query(&format!(
+                    "ALTER TABLE {}.{} RENAME TO {}",
+                    quoted_schema, quoted_old_assets, quoted_new_assets
+                ))
+                .execute(&mut *tx)
+                .await?;
+            }
         }
 
         // Handle column additions
         if let Some(cols) = add_columns {
             let quoted_schema = quote_ident(&current.schema_name);
-            let quoted_table = quote_ident(&current.table_name);
+            let effective_table = new_table_name.as_deref().unwrap_or(&current.table_name);
+            let quoted_table = quote_ident(effective_table);
             let existing = self.get_user_columns(&mut *tx, &current).await?;
 
             for col in cols {
@@ -613,7 +658,8 @@ impl CollectionService {
         // Handle column removals
         if let Some(cols) = remove_columns {
             let quoted_schema = quote_ident(&current.schema_name);
-            let quoted_table = quote_ident(&current.table_name);
+            let effective_table = new_table_name.as_deref().unwrap_or(&current.table_name);
+            let quoted_table = quote_ident(effective_table);
 
             for col_name in cols {
                 validate_column_name(col_name)?;
