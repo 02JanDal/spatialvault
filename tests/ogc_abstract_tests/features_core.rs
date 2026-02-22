@@ -41,6 +41,73 @@ async fn landing_page_response() {
     assert!(assert_has_link(links, "data"), "Missing data link");
 }
 
+/// Link header must match the top-level links in the JSON response body
+#[tokio::test]
+async fn landing_page_link_header() {
+    let app = TestApp::new().await;
+
+    let response = app.get("/").await;
+    response.assert_success();
+
+    let link_header = response
+        .link_header()
+        .expect("Link header must be present");
+
+    let body: serde_json::Value = response.json();
+    let links = body["links"].as_array().expect("links must be an array");
+
+    // Every rel in the JSON links array must appear in the Link header
+    for link in links {
+        let rel = link["rel"].as_str().expect("link must have rel");
+        assert!(
+            link_header.contains(&format!("rel=\"{}\"", rel)),
+            "Link header missing rel=\"{}\"",
+            rel
+        );
+        let href = link["href"].as_str().expect("link must have href");
+        assert!(
+            link_header.contains(&format!("<{}>", href)),
+            "Link header missing href <{}>",
+            href
+        );
+    }
+
+    // Link header entry count must match JSON links count (each entry starts with '<')
+    let header_entry_count = link_header.matches('<').count();
+    assert_eq!(
+        header_entry_count,
+        links.len(),
+        "Link header has {} entries but JSON has {} links",
+        header_entry_count,
+        links.len()
+    );
+}
+
+/// Collections endpoint Link header must match JSON links
+#[tokio::test]
+async fn collections_link_header() {
+    let app = TestApp::new().await;
+
+    let response = app.get("/collections").await;
+    response.assert_success();
+
+    let link_header = response
+        .link_header()
+        .expect("Link header must be present");
+
+    let body: serde_json::Value = response.json();
+    let links = body["links"].as_array().expect("links must be an array");
+
+    for link in links {
+        let rel = link["rel"].as_str().expect("link must have rel");
+        assert!(
+            link_header.contains(&format!("rel=\"{}\"", rel)),
+            "Link header missing rel=\"{}\"",
+            rel
+        );
+    }
+}
+
 /// A.2.2: API definition retrieval
 #[tokio::test]
 async fn api_definition_retrieval() {

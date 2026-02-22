@@ -177,6 +177,9 @@ fn build_router(
     Router::from(api_router)
         .layer(Extension(config))
         .layer(Extension(openapi))
+        .layer(middleware::from_fn(
+            spatialvault::api::link_header_middleware,
+        ))
         .layer(CompressionLayer::new())
         .layer(
             CorsLayer::new()
