@@ -61,12 +61,14 @@ pub mod rel {
     pub const PREV: &str = "prev";
     pub const FIRST: &str = "first";
     pub const LAST: &str = "last";
+    pub const QUERYABLES: &str = "http://www.opengis.net/def/rel/ogc/1.0/queryables";
 }
 
 /// Standard media types
 pub mod media_type {
     pub const JSON: &str = "application/json";
     pub const GEOJSON: &str = "application/geo+json";
+    pub const SCHEMA_JSON: &str = "application/schema+json";
     pub const OPENAPI_JSON: &str = "application/vnd.oai.openapi+json;version=3.0";
     pub const HTML: &str = "text/html";
     pub const MVT: &str = "application/vnd.mapbox-vector-tile";

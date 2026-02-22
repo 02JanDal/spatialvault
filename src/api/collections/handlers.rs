@@ -112,6 +112,16 @@ fn build_collection_response(
             .with_type(media_type::JSON)
             .with_title("Schema for this collection"),
         );
+
+        // Add queryables link
+        links.push(
+            Link::new(
+                format!("{}/collections/{}/queryables", base_url, id),
+                rel::QUERYABLES,
+            )
+            .with_type(media_type::SCHEMA_JSON)
+            .with_title("Queryables for this collection"),
+        );
     }
 
     CollectionResponse {
@@ -529,6 +539,40 @@ fn get_collection_schema_docs(op: TransformOperation) -> TransformOperation {
         .response_with::<200, Json<CollectionSchema>, _>(|res| res.description("Collection schema"))
 }
 
+/// Path parameters for collection queryables endpoint
+#[aide::axum::typed_path]
+#[typed_path("/collections/{collection_id}/queryables")]
+pub struct CollectionQueryablesPath {
+    /// The collection identifier
+    pub collection_id: String,
+}
+
+pub async fn get_collection_queryables(
+    Extension(user): Extension<AuthenticatedUser>,
+    State((_storage, service, _process_service)): State<AppState>,
+    path: CollectionQueryablesPath,
+) -> Result<Response, AppError> {
+    let queryables = service
+        .get_collection_queryables(&user.username, &path.collection_id)
+        .await?;
+
+    use std::str::FromStr;
+    Ok((
+        TypedHeader(headers::ContentType::from_str(media_type::SCHEMA_JSON).unwrap()),
+        Json(queryables),
+    )
+        .into_response())
+}
+
+fn get_collection_queryables_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Get collection queryables")
+        .description("Returns the queryable properties for this collection that can be used in filter expressions")
+        .tag("Collections")
+        .response_with::<200, Json<CollectionSchema>, _>(|res| {
+            res.description("Collection queryables")
+        })
+}
+
 pub fn routes(
     storage: Arc<S3Storage>,
     service: Arc<CollectionService>,
@@ -550,6 +594,10 @@ pub fn routes(
         .api_route(
             CollectionSchemaPath::PATH,
             get_with(get_collection_schema, get_collection_schema_docs),
+        )
+        .api_route(
+            CollectionQueryablesPath::PATH,
+            get_with(get_collection_queryables, get_collection_queryables_docs),
         )
         .with_state((storage, service, process_service))
 }

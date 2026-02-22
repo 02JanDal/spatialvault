@@ -248,3 +248,87 @@ async fn link_headers_and_relations() {
         "Self link should have type"
     );
 }
+
+/// Queryables: collection queryables endpoint returns valid schema
+#[tokio::test]
+async fn collection_queryables() {
+    let app = TestApp::new().await;
+
+    // Create a collection with known columns
+    let collection = test_collection_request("test-queryables", "vector");
+    let create_response = app.post_json("/collections", &collection).await;
+    create_response.assert_status(StatusCode::CREATED);
+
+    let created: serde_json::Value = create_response.json();
+    let collection_id = created["id"].as_str().expect("Collection must have id");
+
+    // Verify collection detail includes queryables link
+    let collection_response = app.get(&format!("/collections/{}", collection_id)).await;
+    collection_response.assert_success();
+    let collection_body: serde_json::Value = collection_response.json();
+    let links = collection_body["links"].as_array().unwrap();
+    assert!(
+        assert_has_link(links, "http://www.opengis.net/def/rel/ogc/1.0/queryables"),
+        "Collection should have queryables link"
+    );
+
+    // Fetch the queryables endpoint
+    let queryables_response = app
+        .get(&format!("/collections/{}/queryables", collection_id))
+        .await;
+    queryables_response.assert_success();
+    queryables_response.assert_content_type("application/schema+json");
+
+    let body: serde_json::Value = queryables_response.json();
+
+    // Must have $schema
+    assert!(body["$schema"].is_string(), "Queryables must have $schema");
+    // Must have $id
+    assert!(body["$id"].is_string(), "Queryables must have $id");
+    // Must be object type
+    assert_eq!(
+        body["type"].as_str(),
+        Some("object"),
+        "Queryables must be type object"
+    );
+    // Must have properties
+    let props = body["properties"].as_object().expect("Queryables must have properties");
+
+    // Must include feature id queryable with x-ogc-role: id
+    let id_prop = props.get("id").expect("Queryables must include id property");
+    assert_eq!(
+        id_prop["x-ogc-role"].as_str(),
+        Some("id"),
+        "id property must have x-ogc-role: id"
+    );
+
+    // Must include geometry queryable with x-ogc-role: primary-geometry
+    let geom_prop = props
+        .get("geometry")
+        .expect("Queryables must include geometry property");
+    assert_eq!(
+        geom_prop["x-ogc-role"].as_str(),
+        Some("primary-geometry"),
+        "geometry property must have x-ogc-role: primary-geometry"
+    );
+
+    // Must include user-defined columns (name and value from test fixture)
+    assert!(
+        props.contains_key("name"),
+        "Queryables must include 'name' column"
+    );
+    assert!(
+        props.contains_key("value"),
+        "Queryables must include 'value' column"
+    );
+
+    // 404 for non-existent collection
+    let missing_response = app
+        .get("/collections/nonexistent:collection/queryables")
+        .await;
+    assert_eq!(
+        missing_response.status,
+        StatusCode::NOT_FOUND,
+        "Should return 404 for non-existent collection"
+    );
+}
