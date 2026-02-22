@@ -47,27 +47,29 @@ impl StacService {
         let mut where_clauses = vec!["TRUE".to_string()];
 
         // Filter by collections
-        let tables: Vec<(String, String, String)> = if let Some(ref collections) =
+        let tables: Vec<(String, String, String, String)> = if let Some(ref collections) =
             params.collections
         {
             let collection_list: Vec<&str> = collections.split(',').map(|s| s.trim()).collect();
-            sqlx::query_as("SELECT canonical_name, schema_name, table_name FROM spatialvault.collections WHERE canonical_name = ANY($1)")
+            sqlx::query_as("SELECT canonical_name, schema_name, table_name, collection_type FROM spatialvault.collections WHERE canonical_name = ANY($1)")
                 .bind(&collection_list)
                 .fetch_all(self.db.pool())
                 .await?
         } else {
             sqlx::query_as(
-                "SELECT canonical_name, schema_name, table_name FROM spatialvault.collections",
+                "SELECT canonical_name, schema_name, table_name, collection_type FROM spatialvault.collections",
             )
             .fetch_all(self.db.pool())
             .await?
         };
         let tables: Vec<_> = tables
             .into_iter()
-            .map(|(name, schema, table)| {
+            .map(|(name, schema, table, ctype)| {
+                let has_datetime = ctype == "raster" || ctype == "pointcloud";
                 (
                     name,
                     format!("{}.{}", quote_ident(&schema), quote_ident(&table)),
+                    has_datetime,
                 )
             })
             .collect();
@@ -115,10 +117,19 @@ impl StacService {
 
         let where_clause = where_clauses.join(" AND ");
 
+        // Early return if no matching collections found
+        if tables.is_empty() {
+            return Ok(StacSearchResult {
+                returned: 0,
+                matched: Some(0),
+                items: vec![],
+            });
+        }
+
         // Count query
         let count_sql = tables
             .iter()
-            .map(|(_, table)| format!("SELECT COUNT(*) FROM {table} i WHERE {where_clause}"))
+            .map(|(_, table, _)| format!("SELECT COUNT(*) FROM {table} i WHERE {where_clause}"))
             .join(" UNION ALL ");
         let count: (i64,) = sqlx::query_as(&count_sql).fetch_one(self.db.pool()).await?;
 
@@ -131,7 +142,9 @@ impl StacService {
         // Data query - get items
         let sql = tables
             .iter()
-            .map(|(collection, table)| {
+            .map(|(collection, table, has_datetime)| {
+                let datetime_col = if *has_datetime { "i._datetime" } else { "NULL::timestamptz" };
+                let order_col = if *has_datetime { "i._datetime DESC NULLS LAST" } else { "i._id" };
                 format!(
                     r#"
             SELECT
@@ -142,11 +155,11 @@ impl StacService {
                 ST_YMin(i.geometry) as miny,
                 ST_XMax(i.geometry) as maxx,
                 ST_YMax(i.geometry) as maxy,
-                i._datetime,
+                {datetime_col} as _datetime,
                 (to_jsonb(i.*) {system_exclusions}) as properties
             FROM {table} i
             WHERE {where_clause}
-            ORDER BY i._datetime DESC NULLS LAST
+            ORDER BY {order_col}
             LIMIT {limit} OFFSET 0
             "#,
                     limit = params.limit
@@ -184,11 +197,16 @@ impl StacService {
                     .get_collection(username, &collection_name)
                     .await?
                     .as_collection();
-                AppResult::<(Uuid, HashMap<Uuid, Assets>)>::Ok((
-                    collection.id,
+                let assets = if self.collection_service.has_assets(&collection).await? {
                     self.feature_service
                         .get_assets_for_items(&collection, &ids)
-                        .await?,
+                        .await?
+                } else {
+                    HashMap::new()
+                };
+                AppResult::<(Uuid, HashMap<Uuid, Assets>)>::Ok((
+                    collection.id,
+                    assets,
                 ))
             }),
         )

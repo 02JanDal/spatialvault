@@ -530,23 +530,10 @@ impl CollectionService {
             .build());
         }
 
-        // Handle rename
-        let final_name = if let Some(new_canonical_name) = new_name {
-            // Create alias from old name
-            sqlx::query(
-                "INSERT INTO spatialvault.collection_aliases (old_name, new_name) VALUES ($1, $2)",
-            )
-            .bind(collection_id)
-            .bind(new_canonical_name)
-            .execute(&mut *tx)
-            .await?;
+        // Determine final canonical name
+        let final_name = new_name.unwrap_or(collection_id);
 
-            new_canonical_name
-        } else {
-            collection_id
-        };
-
-        // Update collection
+        // Update collection first (must happen before alias insert due to FK constraint)
         let collection: Collection = sqlx::query_as(
             r#"
             UPDATE spatialvault.collections
@@ -566,6 +553,17 @@ impl CollectionService {
         .bind(current.id)
         .fetch_one(&mut *tx)
         .await?;
+
+        // Create alias from old name after the canonical_name has been updated
+        if new_name.is_some() {
+            sqlx::query(
+                "INSERT INTO spatialvault.collection_aliases (old_name, new_name) VALUES ($1, $2)",
+            )
+            .bind(collection_id)
+            .bind(final_name)
+            .execute(&mut *tx)
+            .await?;
+        }
 
         // Handle column additions
         if let Some(cols) = add_columns {

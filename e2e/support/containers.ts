@@ -42,8 +42,7 @@ export async function startEnvironment(oidcPort: number): Promise<Environment> {
     // Build and start spatialvault from Dockerfile
     console.log("Building SpatialVault Docker image...");
     appContainer = await GenericContainer.fromDockerfile(projectRoot)
-        .withCache(true)
-        .build("spatialvault-e2e", {deleteOnExit: false})
+        .build()
         .then((image) => {
                 console.log("Starting SpatialVault container...");
                 return image
@@ -65,7 +64,9 @@ export async function startEnvironment(oidcPort: number): Promise<Environment> {
                     .withStartupTimeout(5_000)
                     .withLogConsumer((stream) => {
                         // output to stdout
-                        stream.pipe(process.stdout);
+                        if (process.env.DEBUG) {
+                            stream.pipe(process.stdout);
+                        }
                     })
                     .start();
             }
