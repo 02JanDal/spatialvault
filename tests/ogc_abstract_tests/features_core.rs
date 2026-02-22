@@ -49,9 +49,7 @@ async fn landing_page_link_header() {
     let response = app.get("/").await;
     response.assert_success();
 
-    let link_header = response
-        .link_header()
-        .expect("Link header must be present");
+    let link_header = response.link_header().expect("Link header must be present");
 
     let body: serde_json::Value = response.json();
     let links = body["links"].as_array().expect("links must be an array");
@@ -91,9 +89,7 @@ async fn collections_link_header() {
     let response = app.get("/collections").await;
     response.assert_success();
 
-    let link_header = response
-        .link_header()
-        .expect("Link header must be present");
+    let link_header = response.link_header().expect("Link header must be present");
 
     let body: serde_json::Value = response.json();
     let links = body["links"].as_array().expect("links must be an array");

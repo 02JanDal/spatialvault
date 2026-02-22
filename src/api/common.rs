@@ -455,7 +455,9 @@ mod tests {
             "type": "image/tiff; application=geotiff; profile=cloud-optimized"
         }]);
         let result = format_links_as_header(links.as_array().unwrap());
-        assert!(result.contains("type=\"image/tiff; application=geotiff; profile=cloud-optimized\""));
+        assert!(
+            result.contains("type=\"image/tiff; application=geotiff; profile=cloud-optimized\"")
+        );
     }
 }
 
@@ -500,7 +502,10 @@ pub async fn link_header_middleware(request: Request, next: Next) -> Response {
     let bytes = match body.collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            tracing::warn!("Failed to collect response body for Link header generation: {}", e);
+            tracing::warn!(
+                "Failed to collect response body for Link header generation: {}",
+                e
+            );
             return Response::from_parts(parts, axum::body::Body::empty());
         }
     };
@@ -510,7 +515,11 @@ pub async fn link_header_middleware(request: Request, next: Next) -> Response {
         .and_then(|json| {
             let links = json.get("links")?.as_array()?;
             let formatted = format_links_as_header(links);
-            if formatted.is_empty() { None } else { Some(formatted) }
+            if formatted.is_empty() {
+                None
+            } else {
+                Some(formatted)
+            }
         });
 
     let mut response = Response::from_parts(parts, axum::body::Body::from(bytes));

@@ -24,7 +24,10 @@ use tower::ServiceExt;
 
 use spatialvault::storage::S3Storage;
 use spatialvault::{
-    api::{collections, conformance, coverages, features, landing, link_header_middleware, processes, stac, tiles},
+    api::{
+        collections, conformance, coverages, features, landing, link_header_middleware, processes,
+        stac, tiles,
+    },
     auth::AuthenticatedUser,
     config::{Config, DatabaseConfig, OidcConfig, S3Config},
     db::Database,
