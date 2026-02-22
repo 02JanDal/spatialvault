@@ -132,6 +132,10 @@ jobs:
     needs: [ test, format, e2e ]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
+      - name: Compute lowercase image name
+        shell: bash
+        run: echo "IMAGE_NAME_LC=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -149,7 +153,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
           tags: |
             type=ref,event=branch
             type=sha,prefix={{branch}}-
@@ -174,6 +178,6 @@ jobs:
       - name: Sign the Docker image
         env:
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
-          IMAGE_URI: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_URI: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
         run: |
           cosign sign --yes ${IMAGE_URI}@${DIGEST}
