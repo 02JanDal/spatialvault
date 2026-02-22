@@ -36,3 +36,23 @@ Feature: Collection Rename and Redirects
     And the response should have a "location" header
     When I send a GET request to "/collections/testuser:old-name/schema"
     Then the response status should be 307
+
+  Scenario: Features remain accessible after collection rename
+    Given a vector collection "pre-rename" exists
+    And the collection "testuser:pre-rename" has a feature:
+      """
+      {
+        "type": "Feature",
+        "geometry": { "type": "Point", "coordinates": [10.0, 50.0] },
+        "properties": { "name": "Test Feature", "value": 1 }
+      }
+      """
+    When I send a PATCH request to "/collections/testuser:pre-rename" with the stored ETag and JSON:
+      """
+      { "id": "testuser:post-rename" }
+      """
+    Then the response status should be 200
+    And the response "id" should be "testuser:post-rename"
+    When I send a GET request to "/collections/testuser:post-rename/items"
+    Then the response status should be 200
+    And the response "numberMatched" should be "1"
