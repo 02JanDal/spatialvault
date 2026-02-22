@@ -44,6 +44,6 @@ Feature: Collection Rename and Redirects
       { "id": "testuser:tbl-after" }
       """
     Then the response status should be 200
-    And the collection "testuser:tbl-after" should have table_name "tbl_after" in the database
-    And the database table "testuser"."tbl_after" should exist
-    And the database table "testuser"."tbl_before" should not exist
+    And the collection "testuser:tbl-after" should have table_name "tbl-after" in the database
+    And the database table "testuser"."tbl-after" should exist
+    And the database table "testuser"."tbl-before" should not exist

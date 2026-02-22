@@ -596,8 +596,7 @@ impl CollectionService {
 
             // Rename the assets table too (only created for raster/pointcloud collections)
             if current.collection_type == "raster" || current.collection_type == "pointcloud" {
-                let quoted_old_assets =
-                    quote_ident(&format!("_{}_assets", current.table_name));
+                let quoted_old_assets = quote_ident(&format!("_{}_assets", current.table_name));
                 let quoted_new_assets = quote_ident(&format!("_{}_assets", new_tbl));
 
                 sqlx::query(&format!(
