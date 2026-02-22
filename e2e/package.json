@@ -3,9 +3,11 @@
   "private": true,
   "scripts": {
     "test": "cucumber-js",
-    "test:parallel": "cucumber-js --parallel 2"
+    "test:parallel": "cucumber-js --parallel 2",
+    "test:ci": "cucumber-js --profile ci"
   },
   "dependencies": {
+    "@actions/core": "^1.11.0",
     "@cucumber/cucumber": "^11.0.0",
     "jose": "^6.0.0",
     "pg": "^8.13.0",
