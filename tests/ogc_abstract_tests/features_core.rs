@@ -292,10 +292,14 @@ async fn collection_queryables() {
         "Queryables must be type object"
     );
     // Must have properties
-    let props = body["properties"].as_object().expect("Queryables must have properties");
+    let props = body["properties"]
+        .as_object()
+        .expect("Queryables must have properties");
 
     // Must include feature id queryable with x-ogc-role: id
-    let id_prop = props.get("id").expect("Queryables must include id property");
+    let id_prop = props
+        .get("id")
+        .expect("Queryables must include id property");
     assert_eq!(
         id_prop["x-ogc-role"].as_str(),
         Some("id"),
