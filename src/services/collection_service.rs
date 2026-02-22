@@ -1092,8 +1092,8 @@ impl CollectionService {
     ) -> AppResult<CollectionSchema> {
         let collection = self.get_collection(username, collection_id).await?;
 
-        // Get column information from PostgreSQL
-        let columns: Vec<(String, String, String, Option<i32>)> = sqlx::query_as(
+        // Get column information from PostgreSQL, including nullability and column comments
+        let columns: Vec<(String, String, String, Option<i32>, Option<String>)> = sqlx::query_as(
             r#"
             SELECT
                 c.column_name,
@@ -1102,7 +1102,11 @@ impl CollectionService {
                 CASE WHEN c.data_type = 'USER-DEFINED' THEN
                     (SELECT srid FROM geometry_columns
                      WHERE f_table_schema = $1 AND f_table_name = $2 AND f_geometry_column = c.column_name)
-                ELSE NULL END as srid
+                ELSE NULL END as srid,
+                col_description(
+                    (quote_ident($1) || '.' || quote_ident($2))::regclass,
+                    c.ordinal_position
+                ) as comment
             FROM information_schema.columns c
             WHERE c.table_schema = $1 AND c.table_name = $2
             ORDER BY c.ordinal_position
@@ -1115,6 +1119,7 @@ impl CollectionService {
 
         // Build JSON Schema properties for queryables
         let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
 
         // Always include feature id as a queryable
         properties.insert(
@@ -1129,7 +1134,7 @@ impl CollectionService {
         // Columns to exclude from queryables output
         let excluded_columns = ["_id", "_version", "_created_at", "_updated_at"];
 
-        for (column_name, data_type, _is_nullable, srid) in columns {
+        for (column_name, data_type, is_nullable, srid, comment) in columns {
             if excluded_columns.contains(&column_name.as_str()) {
                 continue;
             }
@@ -1141,7 +1146,7 @@ impl CollectionService {
                 column_name.clone()
             };
 
-            let column_schema = if column_name == "geometry" || data_type == "USER-DEFINED" {
+            let mut column_schema = if column_name == "geometry" || data_type == "USER-DEFINED" {
                 // Primary geometry column
                 let mut geom_schema = serde_json::json!({
                     "x-ogc-role": "primary-geometry",
@@ -1176,6 +1181,16 @@ impl CollectionService {
                 }
             };
 
+            // Add column comment as description if available
+            if let Some(desc) = comment {
+                column_schema["description"] = serde_json::json!(desc);
+            }
+
+            // Track non-nullable columns for the required list
+            if is_nullable == "NO" {
+                required.push(key.clone());
+            }
+
             properties.insert(key, column_schema);
         }
 
@@ -1185,7 +1200,11 @@ impl CollectionService {
             schema_type: "object".to_string(),
             title: collection.title.clone(),
             properties: serde_json::Value::Object(properties),
-            required: None,
+            required: if required.is_empty() {
+                None
+            } else {
+                Some(required)
+            },
         };
 
         Ok(schema)
