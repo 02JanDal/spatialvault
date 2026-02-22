@@ -1,10 +1,12 @@
 use axum::extract::{FromRequest, Multipart, Request};
 use axum::http::header::{CONTENT_TYPE, IF_MATCH};
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
-use axum::response::IntoResponse;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use axum_extra::TypedHeader;
 use axum_extra::headers::{Error, Header, IfMatch};
 use bytes::Bytes;
+use http_body_util::BodyExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -362,6 +364,7 @@ impl Header for Location {
 #[cfg(test)]
 mod tests {
     use super::etag::VersionMatch;
+    use super::{format_links_as_header, quote_link_param};
     use axum_extra::TypedHeader;
     use axum_extra::headers::{Header, IfMatch};
 
@@ -388,6 +391,74 @@ mod tests {
         let if_match = make_if_match(42);
         assert!(!if_match.matches(99));
     }
+
+    #[test]
+    fn quote_link_param_wraps_in_double_quotes() {
+        assert_eq!(quote_link_param("self"), "\"self\"");
+    }
+
+    #[test]
+    fn quote_link_param_escapes_double_quotes() {
+        assert_eq!(quote_link_param("say \"hi\""), "\"say \\\"hi\\\"\"");
+    }
+
+    #[test]
+    fn quote_link_param_escapes_backslash() {
+        assert_eq!(quote_link_param("a\\b"), "\"a\\\\b\"");
+    }
+
+    #[test]
+    fn format_links_as_header_empty() {
+        assert_eq!(format_links_as_header(&[]), "");
+    }
+
+    #[test]
+    fn format_links_as_header_minimal() {
+        let links = serde_json::json!([{"href": "http://example.com", "rel": "self"}]);
+        let result = format_links_as_header(links.as_array().unwrap());
+        assert_eq!(result, "<http://example.com>; rel=\"self\"");
+    }
+
+    #[test]
+    fn format_links_as_header_with_type_and_title() {
+        let links = serde_json::json!([{
+            "href": "http://example.com",
+            "rel": "self",
+            "type": "application/json",
+            "title": "This document"
+        }]);
+        let result = format_links_as_header(links.as_array().unwrap());
+        assert_eq!(
+            result,
+            "<http://example.com>; rel=\"self\"; type=\"application/json\"; title=\"This document\""
+        );
+    }
+
+    #[test]
+    fn format_links_as_header_multiple_links() {
+        let links = serde_json::json!([
+            {"href": "http://example.com/", "rel": "self"},
+            {"href": "http://example.com/api", "rel": "service-desc"}
+        ]);
+        let result = format_links_as_header(links.as_array().unwrap());
+        assert_eq!(
+            result,
+            "<http://example.com/>; rel=\"self\", <http://example.com/api>; rel=\"service-desc\""
+        );
+    }
+
+    #[test]
+    fn format_links_as_header_type_with_semicolons() {
+        let links = serde_json::json!([{
+            "href": "http://example.com/cog.tif",
+            "rel": "data",
+            "type": "image/tiff; application=geotiff; profile=cloud-optimized"
+        }]);
+        let result = format_links_as_header(links.as_array().unwrap());
+        assert!(
+            result.contains("type=\"image/tiff; application=geotiff; profile=cloud-optimized\"")
+        );
+    }
 }
 
 /**
@@ -404,4 +475,100 @@ pub fn fix_header(
     } else {
         None
     }
+}
+
+/// Middleware that populates the `Link` HTTP response header from the top-level
+/// `links` array in JSON responses, following RFC 8288.
+///
+/// This avoids specifying links twice: they are declared once in the response
+/// body and the header is derived automatically.
+pub async fn link_header_middleware(request: Request, next: Next) -> Response {
+    let response = next.run(request).await;
+
+    // Only process JSON responses
+    let is_json = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.contains("json"))
+        .unwrap_or(false);
+
+    if !is_json {
+        return response;
+    }
+
+    let (parts, body) = response.into_parts();
+
+    let bytes = match body.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to collect response body for Link header generation: {}",
+                e
+            );
+            return Response::from_parts(parts, axum::body::Body::empty());
+        }
+    };
+
+    let link_header_value = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|json| {
+            let links = json.get("links")?.as_array()?;
+            let formatted = format_links_as_header(links);
+            if formatted.is_empty() {
+                None
+            } else {
+                Some(formatted)
+            }
+        });
+
+    let mut response = Response::from_parts(parts, axum::body::Body::from(bytes));
+
+    if let Some(value) = link_header_value {
+        match HeaderValue::from_str(&value) {
+            Ok(header_value) => {
+                response.headers_mut().insert(header::LINK, header_value);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create Link header value: {}", e);
+            }
+        }
+    }
+
+    response
+}
+
+/// Format a JSON `links` array as an RFC 8288 `Link` header value.
+fn format_links_as_header(links: &[serde_json::Value]) -> String {
+    links
+        .iter()
+        .filter_map(|link| {
+            let href = link.get("href")?.as_str()?;
+            let rel = link.get("rel")?.as_str()?;
+
+            let mut parts = vec![
+                format!("<{}>", href),
+                format!("rel={}", quote_link_param(rel)),
+            ];
+
+            if let Some(t) = link.get("type").and_then(|v| v.as_str()) {
+                parts.push(format!("type={}", quote_link_param(t)));
+            }
+            if let Some(title) = link.get("title").and_then(|v| v.as_str()) {
+                parts.push(format!("title={}", quote_link_param(title)));
+            }
+            if let Some(hreflang) = link.get("hreflang").and_then(|v| v.as_str()) {
+                parts.push(format!("hreflang={}", quote_link_param(hreflang)));
+            }
+
+            Some(parts.join("; "))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Quote a link parameter value as an RFC 8288 quoted-string.
+fn quote_link_param(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{}\"", escaped)
 }

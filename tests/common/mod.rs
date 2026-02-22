@@ -24,7 +24,10 @@ use tower::ServiceExt;
 
 use spatialvault::storage::S3Storage;
 use spatialvault::{
-    api::{collections, conformance, coverages, features, landing, processes, stac, tiles},
+    api::{
+        collections, conformance, coverages, features, landing, link_header_middleware, processes,
+        stac, tiles,
+    },
     auth::AuthenticatedUser,
     config::{Config, DatabaseConfig, OidcConfig, S3Config},
     db::Database,
@@ -346,6 +349,7 @@ impl TestApp {
         Router::from(api_router)
             .layer(Extension(config))
             .layer(Extension(openapi_arc))
+            .layer(axum::middleware::from_fn(link_header_middleware))
     }
 
     /// Make a GET request to the test app
@@ -618,6 +622,14 @@ impl TestResponse {
     pub fn location(&self) -> Option<String> {
         self.headers
             .get(header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+    }
+
+    /// Get the Link header value
+    pub fn link_header(&self) -> Option<String> {
+        self.headers
+            .get(header::LINK)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
     }
