@@ -60,6 +60,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 config = "0.14"
 url = "2"
 bytes = "1"
+http-body-util = "0.1"
 futures = "0.3"
 async-trait = "0.1"
 indexmap = "2.13.0"
@@ -72,4 +73,3 @@ testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["postgres"] }
 tower = { version = "0.5", features = ["util"] }
 hyper = "1.0"
-http-body-util = "0.1"
