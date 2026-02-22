@@ -37,22 +37,13 @@ Feature: Collection Rename and Redirects
     When I send a GET request to "/collections/testuser:old-name/schema"
     Then the response status should be 307
 
-  Scenario: Features remain accessible after collection rename
-    Given a vector collection "pre-rename" exists
-    And the collection "testuser:pre-rename" has a feature:
+  Scenario: Rename updates the table_name in the collections registry
+    Given a vector collection "tbl-before" exists
+    When I send a PATCH request to "/collections/testuser:tbl-before" with the stored ETag and JSON:
       """
-      {
-        "type": "Feature",
-        "geometry": { "type": "Point", "coordinates": [10.0, 50.0] },
-        "properties": { "name": "Test Feature", "value": 1 }
-      }
-      """
-    When I send a PATCH request to "/collections/testuser:pre-rename" with the stored ETag and JSON:
-      """
-      { "id": "testuser:post-rename" }
+      { "id": "testuser:tbl-after" }
       """
     Then the response status should be 200
-    And the response "id" should be "testuser:post-rename"
-    When I send a GET request to "/collections/testuser:post-rename/items"
-    Then the response status should be 200
-    And the response "numberMatched" should be "1"
+    And the collection "testuser:tbl-after" should have table_name "tbl_after" in the database
+    And the database table "testuser"."tbl_after" should exist
+    And the database table "testuser"."tbl_before" should not exist
