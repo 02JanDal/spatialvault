@@ -134,7 +134,8 @@ impl StacService {
         let count: (i64,) = sqlx::query_as(&count_sql).fetch_one(self.db.pool()).await?;
 
         // Build the system columns exclusion list for to_jsonb
-        let system_exclusions = crate::services::collection_service::SYSTEM_COLUMNS.iter()
+        let system_exclusions = crate::services::collection_service::SYSTEM_COLUMNS
+            .iter()
             .map(|c| format!("- '{}'", c))
             .collect::<Vec<_>>()
             .join(" ");
@@ -143,8 +144,16 @@ impl StacService {
         let sql = tables
             .iter()
             .map(|(collection, table, has_datetime)| {
-                let datetime_col = if *has_datetime { "i._datetime" } else { "NULL::timestamptz" };
-                let order_col = if *has_datetime { "i._datetime DESC NULLS LAST" } else { "i._id" };
+                let datetime_col = if *has_datetime {
+                    "i._datetime"
+                } else {
+                    "NULL::timestamptz"
+                };
+                let order_col = if *has_datetime {
+                    "i._datetime DESC NULLS LAST"
+                } else {
+                    "i._id"
+                };
                 format!(
                     r#"
             SELECT
@@ -190,8 +199,8 @@ impl StacService {
             })
             .collect();
 
-        let assets_map: HashMap<_, _> = try_join_all(
-            grouped.into_iter().map(|(collection_name, ids)| async move {
+        let assets_map: HashMap<_, _> = try_join_all(grouped.into_iter().map(
+            |(collection_name, ids)| async move {
                 let collection = self
                     .collection_service
                     .get_collection(username, &collection_name)
@@ -204,12 +213,9 @@ impl StacService {
                 } else {
                     HashMap::new()
                 };
-                AppResult::<(Uuid, HashMap<Uuid, Assets>)>::Ok((
-                    collection.id,
-                    assets,
-                ))
-            }),
-        )
+                AppResult::<(Uuid, HashMap<Uuid, Assets>)>::Ok((collection.id, assets))
+            },
+        ))
         .await?
         .into_iter()
         .collect();

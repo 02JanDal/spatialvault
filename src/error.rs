@@ -16,49 +16,91 @@ use std::backtrace::Backtrace;
 #[snafu(context(suffix(false)), visibility(pub))]
 pub enum AppError {
     #[snafu(display("Not found: {message}"))]
-    NotFound { message: String, backtrace: Backtrace },
+    NotFound {
+        message: String,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Bad request: {message}"))]
-    BadRequest { message: String, backtrace: Backtrace },
+    BadRequest {
+        message: String,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Unauthorized: {message}"))]
-    Unauthorized { message: String, backtrace: Backtrace },
+    Unauthorized {
+        message: String,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Forbidden: {message}"))]
-    Forbidden { message: String, backtrace: Backtrace },
+    Forbidden {
+        message: String,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Conflict: {message}"))]
-    Conflict { message: String, backtrace: Backtrace },
+    Conflict {
+        message: String,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Precondition failed: {message}"))]
-    PreconditionFailed { message: String, backtrace: Backtrace },
+    PreconditionFailed {
+        message: String,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Internal server error: {message}"))]
-    Internal { message: String, backtrace: Backtrace },
+    Internal {
+        message: String,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Database error: {source:?}"))]
     #[snafu(context(false))]
-    Database { source: sqlx::Error, backtrace: Backtrace },
+    Database {
+        source: sqlx::Error,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Serialization error: {source}"))]
     #[snafu(context(false))]
-    Serialization { source: serde_json::Error, backtrace: Backtrace },
+    Serialization {
+        source: serde_json::Error,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("IO error: {source}"))]
     #[snafu(context(false))]
-    Io { source: std::io::Error, backtrace: Backtrace },
+    Io {
+        source: std::io::Error,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Configuration error: {message}"))]
-    Config { message: String, backtrace: Backtrace },
+    Config {
+        message: String,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Storage error: {message}"))]
-    Storage { message: String, backtrace: Backtrace },
+    Storage {
+        message: String,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Processing error: {message}"))]
-    Processing { message: String, backtrace: Backtrace },
+    Processing {
+        message: String,
+        backtrace: Backtrace,
+    },
 
     #[snafu(display("Collection renamed"))]
-    RenamedTo { message: String, backtrace: Backtrace },
+    RenamedTo {
+        message: String,
+        backtrace: Backtrace,
+    },
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -70,11 +112,21 @@ pub struct ErrorResponse {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code, description) = match &self {
-            AppError::NotFound { message, .. } => (StatusCode::NOT_FOUND, "NotFound", message.clone()),
-            AppError::BadRequest { message, .. } => (StatusCode::BAD_REQUEST, "BadRequest", message.clone()),
-            AppError::Unauthorized { message, .. } => (StatusCode::UNAUTHORIZED, "Unauthorized", message.clone()),
-            AppError::Forbidden { message, .. } => (StatusCode::FORBIDDEN, "Forbidden", message.clone()),
-            AppError::Conflict { message, .. } => (StatusCode::CONFLICT, "Conflict", message.clone()),
+            AppError::NotFound { message, .. } => {
+                (StatusCode::NOT_FOUND, "NotFound", message.clone())
+            }
+            AppError::BadRequest { message, .. } => {
+                (StatusCode::BAD_REQUEST, "BadRequest", message.clone())
+            }
+            AppError::Unauthorized { message, .. } => {
+                (StatusCode::UNAUTHORIZED, "Unauthorized", message.clone())
+            }
+            AppError::Forbidden { message, .. } => {
+                (StatusCode::FORBIDDEN, "Forbidden", message.clone())
+            }
+            AppError::Conflict { message, .. } => {
+                (StatusCode::CONFLICT, "Conflict", message.clone())
+            }
             AppError::PreconditionFailed { message, .. } => (
                 StatusCode::PRECONDITION_FAILED,
                 "PreconditionFailed",

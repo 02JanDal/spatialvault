@@ -157,13 +157,12 @@ impl FeatureQueryParams {
 
     fn validate_datetime_instant(&self, instant: &str) -> AppResult<()> {
         // Basic ISO 8601 validation
-        chrono::DateTime::parse_from_rfc3339(instant)
-            .map_err(|_| {
-                BadRequest {
-                    message: format!("Invalid datetime: {}", instant),
-                }
-                .build()
-            })?;
+        chrono::DateTime::parse_from_rfc3339(instant).map_err(|_| {
+            BadRequest {
+                message: format!("Invalid datetime: {}", instant),
+            }
+            .build()
+        })?;
         Ok(())
     }
 
@@ -205,13 +204,12 @@ impl Cql2Parser {
         let filter = filter.trim();
 
         // Parse using the cql2 crate
-        let expr = cql2::parse_text(filter)
-            .map_err(|e| {
-                BadRequest {
-                    message: format!("CQL2 parse error: {}", e),
-                }
-                .build()
-            })?;
+        let expr = cql2::parse_text(filter).map_err(|e| {
+            BadRequest {
+                message: format!("CQL2 parse error: {}", e),
+            }
+            .build()
+        })?;
 
         // Convert to PostGIS-compatible SQL
         Self::expr_to_postgis_sql(&expr, property_prefix)
@@ -219,13 +217,12 @@ impl Cql2Parser {
 
     /// Parse a CQL2-json filter into SQL WHERE clause
     pub fn parse_json_to_sql(filter: &str, property_prefix: &str) -> AppResult<String> {
-        let expr = cql2::parse_json(filter)
-            .map_err(|e| {
-                BadRequest {
-                    message: format!("CQL2 JSON parse error: {}", e),
-                }
-                .build()
-            })?;
+        let expr = cql2::parse_json(filter).map_err(|e| {
+            BadRequest {
+                message: format!("CQL2 JSON parse error: {}", e),
+            }
+            .build()
+        })?;
 
         Self::expr_to_postgis_sql(&expr, property_prefix)
     }
@@ -406,9 +403,9 @@ impl Cql2Parser {
             if op_lower == *cql_name {
                 if args.len() != 2 {
                     return Err(BadRequest {
-                    message: format!("{} requires 2 arguments", op),
-                }
-                .build());
+                        message: format!("{} requires 2 arguments", op),
+                    }
+                    .build());
                 }
                 let arg1 = Self::expr_to_postgis_sql(&args[0], prefix)?;
                 let arg2 = Self::expr_to_postgis_sql(&args[1], prefix)?;

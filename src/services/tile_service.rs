@@ -27,7 +27,8 @@ impl TileService {
         if collection.collection_type != "vector" {
             return Err(BadRequest {
                 message: "Vector tiles only available for vector collections".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Build MVT query
@@ -59,7 +60,8 @@ impl TileService {
         if collection.collection_type != "raster" {
             return Err(BadRequest {
                 message: "Raster tiles only available for raster collections".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Find COG files that intersect with the tile bounds
@@ -86,7 +88,12 @@ impl TileService {
         let href = cog_href.clone();
         let result = tokio::task::spawn_blocking(move || render_raster_tile(&href, &params))
             .await
-            .map_err(|e| Processing { message: format!("Task join error: {}", e) }.build())??;
+            .map_err(|e| {
+                Processing {
+                    message: format!("Task join error: {}", e),
+                }
+                .build()
+            })??;
 
         Ok(result)
     }
@@ -127,7 +134,6 @@ impl TileService {
 
         Ok(assets.into_iter().map(|(href,)| href).collect())
     }
-
 }
 
 /// Create an empty/transparent tile in the requested format

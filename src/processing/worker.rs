@@ -105,10 +105,10 @@ impl JobWorker {
                     .await
             }
             "import-vector" => self.process_import_vector(job_id, &owner, &inputs).await,
-            _ => Processing { message: format!(
-                "Unknown process: {}",
-                process_id
-            )}.fail(),
+            _ => Processing {
+                message: format!("Unknown process: {}", process_id),
+            }
+            .fail(),
         };
 
         match result {
@@ -412,10 +412,13 @@ impl JobWorker {
             Ok(collection) => {
                 // Verify type matches
                 if collection.collection_type != collection_type {
-                    return Err(BadRequest { message: format!(
-                        "Collection '{}' exists but is type '{}', expected '{}'",
-                        collection_name, collection.collection_type, collection_type
-                    )}.build());
+                    return Err(BadRequest {
+                        message: format!(
+                            "Collection '{}' exists but is type '{}', expected '{}'",
+                            collection_name, collection.collection_type, collection_type
+                        ),
+                    }
+                    .build());
                 }
                 return Ok(collection.as_collection());
             }
@@ -439,9 +442,9 @@ impl JobWorker {
                 collection_name, // Use name as title
                 None,
                 collection_type,
-                4326,  // Default to WGS84
-                None,  // No columns for auto-created collections
-                None,  // No import job
+                4326, // Default to WGS84
+                None, // No columns for auto-created collections
+                None, // No import job
             )
             .await
     }
@@ -458,7 +461,12 @@ impl JobWorker {
                 // Decode base64 and write to temp file
                 let data = base64::engine::general_purpose::STANDARD
                     .decode(&inline.value)
-                    .map_err(|e| BadRequest { message: format!("Invalid base64: {}", e) }.build())?;
+                    .map_err(|e| {
+                        BadRequest {
+                            message: format!("Invalid base64: {}", e),
+                        }
+                        .build()
+                    })?;
 
                 // Determine extension from media type if available
                 let extension = inline
@@ -516,28 +524,33 @@ impl JobWorker {
             tokio::fs::write(&local_path, &data).await?;
         } else if url.starts_with("http://") || url.starts_with("https://") {
             // HTTP download
-            let response = reqwest::get(url)
-                .await
-                .map_err(|e| Processing { message: format!("Failed to download: {}", e) }.build())?;
+            let response = reqwest::get(url).await.map_err(|e| {
+                Processing {
+                    message: format!("Failed to download: {}", e),
+                }
+                .build()
+            })?;
 
             if !response.status().is_success() {
-                return Err(Processing { message: format!(
-                    "Download failed with status: {}",
-                    response.status()
-                )}.build());
+                return Err(Processing {
+                    message: format!("Download failed with status: {}", response.status()),
+                }
+                .build());
             }
 
-            let bytes = response
-                .bytes()
-                .await
-                .map_err(|e| Processing { message: format!("Failed to read response: {}", e) }.build())?;
+            let bytes = response.bytes().await.map_err(|e| {
+                Processing {
+                    message: format!("Failed to read response: {}", e),
+                }
+                .build()
+            })?;
 
             tokio::fs::write(&local_path, &bytes).await?;
         } else {
-            return Err(BadRequest { message: format!(
-                "Unsupported URL scheme: {}",
-                url
-            )}.build());
+            return Err(BadRequest {
+                message: format!("Unsupported URL scheme: {}", url),
+            }
+            .build());
         }
 
         tracing::info!("Downloaded {} to {:?}", url, local_path);
@@ -619,10 +632,9 @@ impl JobWorker {
             .update_job_status(job_id, "running", Some("Downloading file"), Some(10))
             .await?;
 
-        let file_path = self.download_file(
-            &format!("s3://{}", inputs.file_key),
-            job_id,
-        ).await?;
+        let file_path = self
+            .download_file(&format!("s3://{}", inputs.file_key), job_id)
+            .await?;
 
         // 2. Open with GDAL (progress: 15%)
         self.process_service
@@ -668,7 +680,10 @@ impl JobWorker {
             let mut tx = self.db.pool().begin().await?;
 
             for feature in batch {
-                match self.insert_feature(&mut tx, &collection, &feature, source_crs, storage_crs).await {
+                match self
+                    .insert_feature(&mut tx, &collection, &feature, source_crs, storage_crs)
+                    .await
+                {
                     Ok(_) => imported += 1,
                     Err(e) => {
                         failed += 1;
@@ -686,7 +701,10 @@ impl JobWorker {
                 .update_job_status(
                     job_id,
                     "running",
-                    Some(&format!("Imported {}/{} features", imported, total_features)),
+                    Some(&format!(
+                        "Imported {}/{} features",
+                        imported, total_features
+                    )),
                     Some(progress),
                 )
                 .await?;
@@ -719,14 +737,20 @@ impl JobWorker {
         let transform_fn = if source_crs == storage_crs {
             format!("ST_GeomFromText($1, {})", storage_crs)
         } else {
-            format!("ST_Transform(ST_GeomFromText($1, {}), {})", source_crs, storage_crs)
+            format!(
+                "ST_Transform(ST_GeomFromText($1, {}), {})",
+                source_crs, storage_crs
+            )
         };
 
         let quoted_schema = self.quote_ident(&collection.schema_name);
         let quoted_table = self.quote_ident(&collection.table_name);
 
         // Get user columns to determine insert strategy
-        let user_columns = self.collection_service.get_user_columns(&mut **tx, collection).await?;
+        let user_columns = self
+            .collection_service
+            .get_user_columns(&mut **tx, collection)
+            .await?;
 
         if user_columns.is_empty() {
             let query = format!(
@@ -738,8 +762,14 @@ impl JobWorker {
                 .await?;
         } else {
             // Use jsonb_populate_record to decompose properties into columns
-            let col_names: Vec<String> = user_columns.iter().map(|c| self.quote_ident(&c.name)).collect();
-            let col_refs: Vec<String> = user_columns.iter().map(|c| format!("r.{}", self.quote_ident(&c.name))).collect();
+            let col_names: Vec<String> = user_columns
+                .iter()
+                .map(|c| self.quote_ident(&c.name))
+                .collect();
+            let col_refs: Vec<String> = user_columns
+                .iter()
+                .map(|c| format!("r.{}", self.quote_ident(&c.name)))
+                .collect();
 
             let query = format!(
                 "INSERT INTO {quoted_schema}.{quoted_table} (geometry, {cols}) \

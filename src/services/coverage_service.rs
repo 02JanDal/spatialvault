@@ -29,7 +29,8 @@ impl CoverageService {
         if collection.collection_type != "raster" {
             return Err(BadRequest {
                 message: "Coverages only available for raster collections".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Get actual extent from items
@@ -81,7 +82,8 @@ impl CoverageService {
         if collection.collection_type != "raster" {
             return Err(BadRequest {
                 message: "Coverages only available for raster collections".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Get number of items to use as hint for band count
@@ -119,7 +121,8 @@ impl CoverageService {
         if collection.collection_type != "raster" {
             return Err(BadRequest {
                 message: "Coverages only available for raster collections".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // Get the primary asset for the first item in the collection
@@ -146,14 +149,18 @@ impl CoverageService {
             Some((href,)) => {
                 // For now, return a redirect hint in the error
                 // A full implementation would use GDAL to read the COG
-                Err(Internal { message: format!(
-                    "Coverage data available at: {}. Direct access requires GDAL integration.",
-                    href
-                ) }.build())
+                Err(Internal {
+                    message: format!(
+                        "Coverage data available at: {}. Direct access requires GDAL integration.",
+                        href
+                    ),
+                }
+                .build())
             }
             None => Err(NotFound {
                 message: "No raster data available for this collection".to_string(),
-            }.build()),
+            }
+            .build()),
         }
     }
 

@@ -15,10 +15,10 @@ impl<'a> RoleManager<'a> {
     /// Ensure a user role exists, creating it if necessary
     pub async fn ensure_user_role(&self, username: &str) -> AppResult<()> {
         if !is_valid_role_name(username) {
-            return Err(BadRequest { message: format!(
-                "Invalid username: {}",
-                username
-            ) }.build());
+            return Err(BadRequest {
+                message: format!("Invalid username: {}", username),
+            }
+            .build());
         }
 
         // Call the stored function to create role and schema
@@ -34,10 +34,10 @@ impl<'a> RoleManager<'a> {
     /// Ensure a group role exists, creating it if necessary
     pub async fn ensure_group_role(&self, group_name: &str) -> AppResult<()> {
         if !is_valid_role_name(group_name) {
-            return Err(BadRequest { message: format!(
-                "Invalid group name: {}",
-                group_name
-            ) }.build());
+            return Err(BadRequest {
+                message: format!("Invalid group name: {}", group_name),
+            }
+            .build());
         }
 
         sqlx::query("SELECT spatialvault.ensure_role($1, true)")
@@ -54,7 +54,8 @@ impl<'a> RoleManager<'a> {
         if !is_valid_role_name(role) || !is_valid_role_name(user) {
             return Err(BadRequest {
                 message: "Invalid role or user name".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         let sql = format!("GRANT {} TO {}", quote_ident(role), quote_ident(user));
@@ -69,7 +70,8 @@ impl<'a> RoleManager<'a> {
         if !is_valid_role_name(role) || !is_valid_role_name(user) {
             return Err(BadRequest {
                 message: "Invalid role or user name".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         let sql = format!("REVOKE {} FROM {}", quote_ident(role), quote_ident(user));
@@ -101,7 +103,8 @@ impl<'a> RoleManager<'a> {
         if !is_valid_role_name(schema) || !is_valid_role_name(role) {
             return Err(BadRequest {
                 message: "Invalid schema or role name".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         // First grant USAGE on the schema so the role can access tables in it
@@ -136,7 +139,8 @@ impl<'a> RoleManager<'a> {
         if !is_valid_role_name(schema) || !is_valid_role_name(role) {
             return Err(BadRequest {
                 message: "Invalid schema or role name".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         let sql = format!(

@@ -1,8 +1,8 @@
 use crate::api::common::crs::{srid_to_uri, uri_to_srid};
 use crate::error::{AppResult, BadRequest};
-use snafu::OptionExt;
 use axum::http::{HeaderName, HeaderValue};
 use axum_extra::headers::{Error, Header};
+use snafu::OptionExt;
 
 /// Parse CRS parameter and return SRID
 pub fn parse_crs_param(crs: Option<&str>) -> AppResult<Option<i32>> {

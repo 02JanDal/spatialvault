@@ -19,9 +19,7 @@ impl Database {
             .connect(&config.url)
             .await?;
 
-        Ok(Self {
-            pool,
-        })
+        Ok(Self { pool })
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -44,10 +42,10 @@ impl Database {
         username: &str,
     ) -> AppResult<sqlx::Transaction<'_, sqlx::Postgres>> {
         if !is_valid_role_name(username) {
-            return Err(BadRequest { message: format!(
-                "Invalid username: {}",
-                username
-            ) }.build());
+            return Err(BadRequest {
+                message: format!("Invalid username: {}", username),
+            }
+            .build());
         }
 
         let mut tx = self.pool.begin().await?;
@@ -60,7 +58,12 @@ impl Database {
         sqlx::migrate!("./migrations")
             .run(&self.pool)
             .await
-            .map_err(|e| Internal { message: format!("Migration failed: {}", e) }.build())?;
+            .map_err(|e| {
+                Internal {
+                    message: format!("Migration failed: {}", e),
+                }
+                .build()
+            })?;
         Ok(())
     }
 }

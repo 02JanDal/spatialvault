@@ -136,7 +136,8 @@ impl ProcessService {
         if result.rows_affected() == 0 {
             return Err(NotFound {
                 message: "Job not found or cannot be dismissed".to_string(),
-            }.build());
+            }
+            .build());
         }
 
         Ok(())

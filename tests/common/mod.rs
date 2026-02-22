@@ -453,8 +453,10 @@ impl TestApp {
     /// Create a new TestApp instance sharing the same database but with a different user.
     /// Efficient for multi-user authorization tests - no new container needed.
     pub fn spawn_user(&self, mock_auth: MockAuthState) -> TestApp {
-        let collection_service =
-            Arc::new(CollectionService::new(self.db.clone(), self.config.base_url.clone()));
+        let collection_service = Arc::new(CollectionService::new(
+            self.db.clone(),
+            self.config.base_url.clone(),
+        ));
         let feature_service = Arc::new(FeatureService::new(
             self.db.clone(),
             collection_service.clone(),

@@ -60,7 +60,8 @@ pub fn mvt_sql(
     };
 
     // Build system column exclusions for reconstructing properties from real columns
-    let system_exclusions = SYSTEM_COLUMNS.iter()
+    let system_exclusions = SYSTEM_COLUMNS
+        .iter()
         .map(|c| format!("- '{}'", c))
         .collect::<Vec<_>>()
         .join(" ");

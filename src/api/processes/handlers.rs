@@ -20,8 +20,8 @@ use crate::api::common::{Link, media_type, rel};
 use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::{AppResult, BadRequest, Internal, NotFound};
-use snafu::OptionExt;
 use crate::services::ProcessService;
+use snafu::OptionExt;
 
 /// Process summary
 #[derive(Debug, Serialize, JsonSchema)]

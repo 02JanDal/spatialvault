@@ -102,7 +102,8 @@ impl VectorImporter {
         for field in defn.fields() {
             let name = field.name();
             let col_type = match field.field_type() {
-                gdal::vector::OGRFieldType::OFTInteger | gdal::vector::OGRFieldType::OFTInteger64 => ColumnType::Integer,
+                gdal::vector::OGRFieldType::OFTInteger
+                | gdal::vector::OGRFieldType::OFTInteger64 => ColumnType::Integer,
                 gdal::vector::OGRFieldType::OFTReal => ColumnType::Real,
                 gdal::vector::OGRFieldType::OFTString => ColumnType::String,
                 gdal::vector::OGRFieldType::OFTDate => ColumnType::Date,
@@ -153,21 +154,14 @@ fn extract_properties(feature: &gdal::vector::Feature) -> AppResult<serde_json::
     // Iterate through all fields in the feature
     for (field_name, field_value) in feature.fields() {
         let value = match field_value {
-            Some(gdal::vector::FieldValue::IntegerValue(i)) => {
-                serde_json::Value::Number(i.into())
-            }
+            Some(gdal::vector::FieldValue::IntegerValue(i)) => serde_json::Value::Number(i.into()),
             Some(gdal::vector::FieldValue::Integer64Value(i)) => {
                 serde_json::Value::Number(i.into())
             }
-            Some(gdal::vector::FieldValue::RealValue(f)) => {
-                serde_json::Value::Number(
-                    serde_json::Number::from_f64(f)
-                        .unwrap_or_else(|| serde_json::Number::from(0)),
-                )
-            }
-            Some(gdal::vector::FieldValue::StringValue(s)) => {
-                serde_json::Value::String(s.clone())
-            }
+            Some(gdal::vector::FieldValue::RealValue(f)) => serde_json::Value::Number(
+                serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0)),
+            ),
+            Some(gdal::vector::FieldValue::StringValue(s)) => serde_json::Value::String(s.clone()),
             Some(gdal::vector::FieldValue::DateValue(date)) => {
                 serde_json::Value::String(date.to_string())
             }

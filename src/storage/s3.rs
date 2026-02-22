@@ -30,9 +30,12 @@ impl S3Storage {
             builder = builder.with_secret_access_key(secret_access_key);
         }
 
-        let store = builder
+        let store = builder.build().map_err(|e| {
+            Storage {
+                message: format!("Failed to create S3 client: {}", e),
+            }
             .build()
-            .map_err(|e| Storage { message: format!("Failed to create S3 client: {}", e) }.build())?;
+        })?;
 
         Ok(Self {
             store: Arc::new(store),
@@ -43,16 +46,19 @@ impl S3Storage {
     /// Get an object from S3
     pub async fn get(&self, key: &str) -> AppResult<Bytes> {
         let path = Path::from(key);
-        let result = self
-            .store
-            .get(&path)
-            .await
-            .map_err(|e| Storage { message: format!("Failed to get object: {}", e) }.build())?;
+        let result = self.store.get(&path).await.map_err(|e| {
+            Storage {
+                message: format!("Failed to get object: {}", e),
+            }
+            .build()
+        })?;
 
-        let bytes = result
-            .bytes()
-            .await
-            .map_err(|e| Storage { message: format!("Failed to read object: {}", e) }.build())?;
+        let bytes = result.bytes().await.map_err(|e| {
+            Storage {
+                message: format!("Failed to read object: {}", e),
+            }
+            .build()
+        })?;
 
         Ok(bytes)
     }
@@ -60,10 +66,12 @@ impl S3Storage {
     /// Put an object to S3
     pub async fn put(&self, key: &str, data: Bytes) -> AppResult<()> {
         let path = Path::from(key);
-        self.store
-            .put(&path, data.into())
-            .await
-            .map_err(|e| Storage { message: format!("Failed to put object: {}", e) }.build())?;
+        self.store.put(&path, data.into()).await.map_err(|e| {
+            Storage {
+                message: format!("Failed to put object: {}", e),
+            }
+            .build()
+        })?;
 
         Ok(())
     }
@@ -71,10 +79,12 @@ impl S3Storage {
     /// Delete an object from S3
     pub async fn delete(&self, key: &str) -> AppResult<()> {
         let path = Path::from(key);
-        self.store
-            .delete(&path)
-            .await
-            .map_err(|e| Storage { message: format!("Failed to delete object: {}", e) }.build())?;
+        self.store.delete(&path).await.map_err(|e| {
+            Storage {
+                message: format!("Failed to delete object: {}", e),
+            }
+            .build()
+        })?;
 
         Ok(())
     }
@@ -85,18 +95,22 @@ impl S3Storage {
         match self.store.head(&path).await {
             Ok(_) => Ok(true),
             Err(object_store::Error::NotFound { .. }) => Ok(false),
-            Err(e) => Err(Storage { message: format!("Failed to check object: {}", e) }.build()),
+            Err(e) => Err(Storage {
+                message: format!("Failed to check object: {}", e),
+            }
+            .build()),
         }
     }
 
     /// Get object metadata (size, content-type, etc.)
     pub async fn head(&self, key: &str) -> AppResult<ObjectMeta> {
         let path = Path::from(key);
-        let meta = self
-            .store
-            .head(&path)
-            .await
-            .map_err(|e| Storage { message: format!("Failed to get object metadata: {}", e) }.build())?;
+        let meta = self.store.head(&path).await.map_err(|e| {
+            Storage {
+                message: format!("Failed to get object metadata: {}", e),
+            }
+            .build()
+        })?;
 
         Ok(ObjectMeta {
             size: meta.size,

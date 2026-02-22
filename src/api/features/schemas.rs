@@ -9,12 +9,10 @@ use schemars::json_schema;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-use crate::api::common::{
-    Assets, UploadedFile, is_json, is_multipart, parse_multipart_with_files,
-};
+use super::handlers::{CreateFeatureRequest, UpdateFeatureRequest};
+use crate::api::common::{Assets, UploadedFile, is_json, is_multipart, parse_multipart_with_files};
 use crate::error::{AppError, BadRequest, Storage};
 use crate::storage::S3Storage;
-use super::handlers::{CreateFeatureRequest, UpdateFeatureRequest};
 
 // ---------------------------------------------------------------------------
 // Payload enums
@@ -294,13 +292,12 @@ pub async fn resolve_asset_uploads(
             let name = name.to_string();
             if let Some(file) = files.get(&name) {
                 let key = format!("{}-{}", Uuid::new_v4(), file.filename);
-                storage
-                    .put(&key, file.data.clone())
-                    .await
-                    .map_err(|e| Storage {
+                storage.put(&key, file.data.clone()).await.map_err(|e| {
+                    Storage {
                         message: format!("Failed to upload asset '{}': {}", name, e),
                     }
-                    .build())?;
+                    .build()
+                })?;
 
                 asset.href = storage.s3_uri(&key);
 

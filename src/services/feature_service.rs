@@ -136,7 +136,8 @@ impl FeatureService {
         let quoted_table = quote_ident(&collection.table_name);
 
         // Build the system columns exclusion list for to_jsonb
-        let system_exclusions = SYSTEM_COLUMNS.iter()
+        let system_exclusions = SYSTEM_COLUMNS
+            .iter()
             .map(|c| format!("- '{}'", c))
             .collect::<Vec<_>>()
             .join(" ");
@@ -213,12 +214,7 @@ impl FeatureService {
             .map(
                 |(id, minx, miny, maxx, maxy, geometry, datetime, properties, _version)| {
                     let item_assets = if has_assets {
-                        Some(
-                            assets_map
-                                .get(&id)
-                                .cloned()
-                                .unwrap_or_default(),
-                        )
+                        Some(assets_map.get(&id).cloned().unwrap_or_default())
                     } else {
                         None
                     };
@@ -339,16 +335,9 @@ impl FeatureService {
     }
 
     /// Get assets for a single item
-    async fn get_item_assets(
-        &self,
-        collection: &Collection,
-        item_id: &Uuid,
-    ) -> AppResult<Assets> {
+    async fn get_item_assets(&self, collection: &Collection, item_id: &Uuid) -> AppResult<Assets> {
         let assets_map = self.get_assets_for_items(&collection, &[*item_id]).await?;
-        Ok(assets_map
-            .get(item_id)
-            .cloned()
-            .unwrap_or_default())
+        Ok(assets_map.get(item_id).cloned().unwrap_or_default())
     }
 
     /// Read a feature from the given connection (pool or transaction).
@@ -506,7 +495,8 @@ impl FeatureService {
             "NULL AS datetime"
         };
 
-        let system_exclusions = SYSTEM_COLUMNS.iter()
+        let system_exclusions = SYSTEM_COLUMNS
+            .iter()
             .map(|c| format!("- '{}'", c))
             .collect::<Vec<_>>()
             .join(" ");
@@ -621,7 +611,10 @@ impl FeatureService {
         }
 
         // Get user columns before switching role (information_schema query)
-        let user_columns = self.collections.get_user_columns(&mut *tx, &collection).await?;
+        let user_columns = self
+            .collections
+            .get_user_columns(&mut *tx, &collection)
+            .await?;
 
         // Switch to user-role to enforce PostgreSQL permissions
         let set_role_sql = format!("SET LOCAL ROLE {}", quote_ident(username));
@@ -637,12 +630,17 @@ impl FeatureService {
                 if key == "geometry" {
                     return Err(BadRequest {
                         message: "'geometry' is not allowed as a property name".to_string(),
-                    }.build());
+                    }
+                    .build());
                 }
                 if !user_columns.iter().any(|c| c.name == *key) {
                     return Err(BadRequest {
-                        message: format!("Unknown property '{}'. Define it as a column on the collection first.", key),
-                    }.build());
+                        message: format!(
+                            "Unknown property '{}'. Define it as a column on the collection first.",
+                            key
+                        ),
+                    }
+                    .build());
                 }
             }
         }
@@ -667,8 +665,12 @@ impl FeatureService {
                 .await?
         } else {
             // Use jsonb_populate_record to decompose properties into columns
-            let col_names: Vec<String> = user_columns.iter().map(|c| quote_ident(&c.name)).collect();
-            let col_refs: Vec<String> = user_columns.iter().map(|c| format!("r.{}", quote_ident(&c.name))).collect();
+            let col_names: Vec<String> =
+                user_columns.iter().map(|c| quote_ident(&c.name)).collect();
+            let col_refs: Vec<String> = user_columns
+                .iter()
+                .map(|c| format!("r.{}", quote_ident(&c.name)))
+                .collect();
 
             let sql = format!(
                 r#"
@@ -727,8 +729,7 @@ impl FeatureService {
         properties: Option<serde_json::Value>,
         _datetime: Option<DateTime<Utc>>,
         assets: Option<Assets>,
-    ) -> AppResult<(Feature, i64)>
-    {
+    ) -> AppResult<(Feature, i64)> {
         let cwc = self
             .collections
             .get_collection(username, collection_id)
@@ -753,7 +754,10 @@ impl FeatureService {
         }
 
         // Get user columns for validation
-        let user_columns = self.collections.get_user_columns(&mut *tx, &collection).await?;
+        let user_columns = self
+            .collections
+            .get_user_columns(&mut *tx, &collection)
+            .await?;
 
         // Switch to user-role to enforce PostgreSQL permissions
         let set_role_sql = format!("SET LOCAL ROLE {}", quote_ident(username));
@@ -792,7 +796,8 @@ impl FeatureService {
                     if key == "geometry" {
                         return Err(BadRequest {
                             message: "'geometry' is not allowed as a property name".to_string(),
-                        }.build());
+                        }
+                        .build());
                     }
                     if !user_columns.iter().any(|c| c.name == *key) {
                         return Err(BadRequest {
@@ -812,10 +817,16 @@ impl FeatureService {
 
         // Build update SQL with per-column CASE for PATCH semantics
         if has_props {
-            let col_sets: Vec<String> = user_columns.iter().map(|c| {
-                let qn = quote_ident(&c.name);
-                format!("{qn} = CASE WHEN $2 ? '{name}' THEN r.{qn} ELSE t.{qn} END", name = c.name)
-            }).collect();
+            let col_sets: Vec<String> = user_columns
+                .iter()
+                .map(|c| {
+                    let qn = quote_ident(&c.name);
+                    format!(
+                        "{qn} = CASE WHEN $2 ? '{name}' THEN r.{qn} ELSE t.{qn} END",
+                        name = c.name
+                    )
+                })
+                .collect();
 
             let mut sql = format!(
                 "UPDATE {quoted_schema}.{quoted_table} t SET _version = t._version + 1, _updated_at = NOW()"
@@ -917,8 +928,7 @@ impl FeatureService {
         properties: serde_json::Value,
         _datetime: Option<DateTime<Utc>>,
         assets: Option<Assets>,
-    ) -> AppResult<(Feature, i64)>
-    {
+    ) -> AppResult<(Feature, i64)> {
         let cwc = self
             .collections
             .get_collection(username, collection_id)
@@ -939,7 +949,10 @@ impl FeatureService {
         }
 
         // Get user columns and validate properties
-        let user_columns = self.collections.get_user_columns(&mut *tx, &collection).await?;
+        let user_columns = self
+            .collections
+            .get_user_columns(&mut *tx, &collection)
+            .await?;
 
         // Switch to user-role to enforce PostgreSQL permissions
         let set_role_sql = format!("SET LOCAL ROLE {}", quote_ident(username));
@@ -979,12 +992,17 @@ impl FeatureService {
                 if key == "geometry" {
                     return Err(BadRequest {
                         message: "'geometry' is not allowed as a property name".to_string(),
-                    }.build());
+                    }
+                    .build());
                 }
                 if !user_columns.iter().any(|c| c.name == *key) {
                     return Err(BadRequest {
-                        message: format!("Unknown property '{}'. Define it as a column on the collection first.", key),
-                    }.build());
+                        message: format!(
+                            "Unknown property '{}'. Define it as a column on the collection first.",
+                            key
+                        ),
+                    }
+                    .build());
                 }
             }
         }
@@ -1013,10 +1031,13 @@ impl FeatureService {
                 .await?;
         } else {
             // PUT semantics: all user columns get the value from the record (NULL if missing)
-            let col_sets: Vec<String> = user_columns.iter().map(|c| {
-                let qn = quote_ident(&c.name);
-                format!("{qn} = r.{qn}")
-            }).collect();
+            let col_sets: Vec<String> = user_columns
+                .iter()
+                .map(|c| {
+                    let qn = quote_ident(&c.name);
+                    format!("{qn} = r.{qn}")
+                })
+                .collect();
 
             let sql = format!(
                 r#"
@@ -1085,8 +1106,7 @@ impl FeatureService {
         collection_id: &str,
         feature_id: Uuid,
         matches: &impl VersionMatch,
-    ) -> AppResult<()>
-    {
+    ) -> AppResult<()> {
         let collection = self
             .collections
             .get_collection(username, collection_id)
@@ -1268,9 +1288,8 @@ impl FeatureService {
         let quoted_schema = quote_ident(schema_name);
         let quoted_assets_table = quote_ident(&format!("_{}_assets", table_name));
         if keep_keys.is_empty() {
-            let sql = format!(
-                "DELETE FROM {quoted_schema}.{quoted_assets_table} WHERE item_id = $1"
-            );
+            let sql =
+                format!("DELETE FROM {quoted_schema}.{quoted_assets_table} WHERE item_id = $1");
             sqlx::query(&sql).bind(item_id).execute(&mut **tx).await?;
         } else {
             let mut builder = QueryBuilder::<Postgres>::new(format!(
@@ -1287,7 +1306,6 @@ impl FeatureService {
         }
         Ok(())
     }
-
 }
 
 #[derive(Debug)]
