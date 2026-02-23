@@ -36,3 +36,14 @@ Feature: Collection Rename and Redirects
     And the response should have a "location" header
     When I send a GET request to "/collections/testuser:old-name/schema"
     Then the response status should be 307
+
+  Scenario: Rename updates the table_name in the collections registry
+    Given a vector collection "tbl-before" exists
+    When I send a PATCH request to "/collections/testuser:tbl-before" with the stored ETag and JSON:
+      """
+      { "id": "testuser:tbl-after" }
+      """
+    Then the response status should be 200
+    And the collection "testuser:tbl-after" should have table_name "tbl-after" in the database
+    And the database table "testuser"."tbl-after" should exist
+    And the database table "testuser"."tbl-before" should not exist
