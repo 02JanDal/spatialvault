@@ -37,6 +37,7 @@ impl FeatureService {
         target_crs: Option<i32>,
         datetime: Option<&str>,
         filter: Option<&str>,
+        filter_lang: Option<&str>,
     ) -> AppResult<(Vec<Feature>, i64, i32)> {
         let cwc = self
             .collections
@@ -68,7 +69,11 @@ impl FeatureService {
 
         // Add CQL2 filter
         if let Some(filter_expr) = filter {
-            let sql_filter = Cql2Parser::parse_to_sql(filter_expr, "")?;
+            let sql_filter = if filter_lang == Some("cql2-json") {
+                Cql2Parser::parse_json_to_sql(filter_expr, "")?
+            } else {
+                Cql2Parser::parse_to_sql(filter_expr, "")?
+            };
             where_clauses.push(WhereClause::Cql2(sql_filter));
         }
 

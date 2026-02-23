@@ -112,9 +112,10 @@ async fn filter_lang_defaults_to_cql2_text() {
         .assert_status(StatusCode::CREATED);
 
     // Filter without specifying filter-lang (should default to cql2-text)
+    // Note: '>' must be percent-encoded as '%3E' in a URI
     let response = app
         .get(&format!(
-            "/collections/{}/items?filter=value>200",
+            "/collections/{}/items?filter=value%3E200",
             collection_id
         ))
         .await;
@@ -162,8 +163,7 @@ async fn filter_parameter_cql2_json_accepted() {
 
     // CQL2-JSON filter expression (percent-encoded)
     // {"op":"=","args":[{"property":"name"},"Paris"]}
-    let encoded_filter =
-        "%7B%22op%22%3A%22%3D%22%2C%22args%22%3A%5B%7B%22property%22%3A%22name%22%7D%2C%22Paris%22%5D%7D";
+    let encoded_filter = "%7B%22op%22%3A%22%3D%22%2C%22args%22%3A%5B%7B%22property%22%3A%22name%22%7D%2C%22Paris%22%5D%7D";
 
     let response = app
         .get(&format!(
@@ -213,9 +213,10 @@ async fn filter_logical_and() {
     }
 
     // Filter with AND: name='Alpha' AND value>15
+    // Spaces and '>' must be percent-encoded in a URI
     let response = app
         .get(&format!(
-            "/collections/{}/items?filter=name='Alpha' AND value>15&filter-lang=cql2-text",
+            "/collections/{}/items?filter=name%3D'Alpha'%20AND%20value%3E15&filter-lang=cql2-text",
             collection_id
         ))
         .await;
@@ -248,10 +249,11 @@ async fn filter_invalid_expression_returns_400() {
     let created: serde_json::Value = create_response.json();
     let collection_id = created["id"].as_str().expect("Collection must have id");
 
-    // Send an invalid CQL2 filter
+    // Send an invalid CQL2 filter: an opening brace '{' is not valid CQL2 text syntax
+    // and will cause a parse error (percent-encoded: %7B is '{')
     let response = app
         .get(&format!(
-            "/collections/{}/items?filter=INVALID%%SYNTAX&filter-lang=cql2-text",
+            "/collections/{}/items?filter=%7Bnot-valid-cql2&filter-lang=cql2-text",
             collection_id
         ))
         .await;

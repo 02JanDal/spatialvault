@@ -126,6 +126,7 @@ pub async fn list_features(
             target_crs,
             params.datetime.as_deref(),
             params.filter.as_deref(),
+            params.filter_lang.as_deref(),
         )
         .await?;
 
