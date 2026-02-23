@@ -122,6 +122,63 @@ Feature: Features API
     Then the response status should be 200
     And the response "features" array should have 1 items
 
+  Scenario: Filter features with CQL2 text filter
+    Given the collection "testuser:places" has a feature:
+      """
+      {
+        "type": "Feature",
+        "geometry": { "type": "Point", "coordinates": [2.35, 48.86] },
+        "properties": { "name": "Paris", "value": 200 }
+      }
+      """
+    And the collection "testuser:places" has a feature:
+      """
+      {
+        "type": "Feature",
+        "geometry": { "type": "Point", "coordinates": [13.4, 52.5] },
+        "properties": { "name": "Berlin", "value": 300 }
+      }
+      """
+    When I send a GET request to "/collections/testuser:places/items?filter=name='Paris'&filter-lang=cql2-text"
+    Then the response status should be 200
+    And the response "features" array should have 1 items
+    And the response "features[0].properties.name" should be "Paris"
+
+  Scenario: Filter features with CQL2 text filter using comparison operator
+    Given the collection "testuser:places" has a feature:
+      """
+      {
+        "type": "Feature",
+        "geometry": { "type": "Point", "coordinates": [2.35, 48.86] },
+        "properties": { "name": "LowValue", "value": 50 }
+      }
+      """
+    And the collection "testuser:places" has a feature:
+      """
+      {
+        "type": "Feature",
+        "geometry": { "type": "Point", "coordinates": [13.4, 52.5] },
+        "properties": { "name": "HighValue", "value": 500 }
+      }
+      """
+    When I send a GET request to "/collections/testuser:places/items?filter=value>100&filter-lang=cql2-text"
+    Then the response status should be 200
+    And the response "features" array should have 1 items
+    And the response "features[0].properties.name" should be "HighValue"
+
+  Scenario: CQL2 filter defaults to cql2-text when filter-lang is omitted
+    Given the collection "testuser:places" has a feature:
+      """
+      {
+        "type": "Feature",
+        "geometry": { "type": "Point", "coordinates": [10.0, 50.0] },
+        "properties": { "name": "FilterDefault", "value": 42 }
+      }
+      """
+    When I send a GET request to "/collections/testuser:places/items?filter=name='FilterDefault'"
+    Then the response status should be 200
+    And the response "features" array should have 1 items
+
   Scenario: Content-Crs header in feature list response
     Given the collection "testuser:places" has a feature:
       """
