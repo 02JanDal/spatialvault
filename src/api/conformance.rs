@@ -73,6 +73,10 @@ pub mod classes {
     // CQL2 Filtering
     pub const CQL2_TEXT: &str = "http://www.opengis.net/spec/cql2/1.0/conf/cql2-text";
     pub const CQL2_JSON: &str = "http://www.opengis.net/spec/cql2/1.0/conf/cql2-json";
+
+    // OGC API Features Part 3 - Queryables
+    pub const FEATURES_QUERYABLES: &str =
+        "http://www.opengis.net/spec/ogcapi-features-3/1.0/conf/queryables";
 }
 
 async fn get_conformance() -> Json<Conformance> {
@@ -115,6 +119,8 @@ async fn get_conformance() -> Json<Conformance> {
             // CQL2
             classes::CQL2_TEXT.to_string(),
             classes::CQL2_JSON.to_string(),
+            // OGC API Features Part 3 - Queryables
+            classes::FEATURES_QUERYABLES.to_string(),
         ],
     };
 

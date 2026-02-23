@@ -1085,6 +1085,131 @@ impl CollectionService {
         Ok(schema)
     }
 
+    pub async fn get_collection_queryables(
+        &self,
+        username: &str,
+        collection_id: &str,
+    ) -> AppResult<CollectionSchema> {
+        let collection = self.get_collection(username, collection_id).await?;
+
+        // Get column information from PostgreSQL, including nullability and column comments
+        let columns: Vec<(String, String, String, Option<i32>, Option<String>)> = sqlx::query_as(
+            r#"
+            SELECT
+                c.column_name,
+                c.data_type,
+                c.is_nullable,
+                CASE WHEN c.data_type = 'USER-DEFINED' THEN
+                    (SELECT srid FROM geometry_columns
+                     WHERE f_table_schema = $1 AND f_table_name = $2 AND f_geometry_column = c.column_name)
+                ELSE NULL END as srid,
+                col_description(
+                    (quote_ident($1) || '.' || quote_ident($2))::regclass,
+                    c.ordinal_position
+                ) as comment
+            FROM information_schema.columns c
+            WHERE c.table_schema = $1 AND c.table_name = $2
+            ORDER BY c.ordinal_position
+            "#,
+        )
+        .bind(&collection.schema_name)
+        .bind(&collection.table_name)
+        .fetch_all(self.db.pool())
+        .await?;
+
+        // Build JSON Schema properties for queryables
+        let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
+
+        // Always include feature id as a queryable
+        properties.insert(
+            "id".to_string(),
+            serde_json::json!({
+                "type": "string",
+                "title": "Feature Identifier",
+                "x-ogc-role": "id"
+            }),
+        );
+
+        // Columns to exclude from queryables output
+        let excluded_columns = ["_id", "_version", "_created_at", "_updated_at"];
+
+        for (column_name, data_type, is_nullable, srid, comment) in columns {
+            if excluded_columns.contains(&column_name.as_str()) {
+                continue;
+            }
+
+            // Map _datetime column name to "datetime" for the queryables document
+            let key = if column_name == "_datetime" {
+                "datetime".to_string()
+            } else {
+                column_name.clone()
+            };
+
+            let mut column_schema = if column_name == "geometry" || data_type == "USER-DEFINED" {
+                // Primary geometry column
+                let mut geom_schema = serde_json::json!({
+                    "x-ogc-role": "primary-geometry",
+                    "format": "geometry",
+                    "$ref": "https://geojson.org/schema/Geometry.json"
+                });
+                if let Some(s) = srid {
+                    geom_schema["x-ogc-srid"] = serde_json::json!(s);
+                }
+                geom_schema
+            } else if column_name == "_datetime" {
+                // Expose datetime as a standard 'datetime' queryable
+                serde_json::json!({ "type": "string", "format": "date-time", "title": "Datetime" })
+            } else {
+                match data_type.as_str() {
+                    "uuid" => serde_json::json!({ "type": "string", "format": "uuid" }),
+                    "text" | "character varying" => serde_json::json!({ "type": "string" }),
+                    "integer" | "bigint" | "smallint" => {
+                        serde_json::json!({ "type": "integer" })
+                    }
+                    "real" | "double precision" | "numeric" => {
+                        serde_json::json!({ "type": "number" })
+                    }
+                    "boolean" => serde_json::json!({ "type": "boolean" }),
+                    "timestamp with time zone" | "timestamp without time zone" => {
+                        serde_json::json!({ "type": "string", "format": "date-time" })
+                    }
+                    "date" => serde_json::json!({ "type": "string", "format": "date" }),
+                    "jsonb" | "json" => serde_json::json!({ "type": "object" }),
+                    "ARRAY" => serde_json::json!({ "type": "array" }),
+                    _ => serde_json::json!({ "type": "string" }),
+                }
+            };
+
+            // Add column comment as description if available
+            if let Some(desc) = comment {
+                column_schema["description"] = serde_json::json!(desc);
+            }
+
+            // Track non-nullable columns for the required list
+            if is_nullable == "NO" {
+                required.push(key.clone());
+            }
+
+            properties.insert(key, column_schema);
+        }
+
+        let schema = CollectionSchema {
+            schema: "https://json-schema.org/draft/2020-12/schema".to_string(),
+            id: format!("/collections/{}/queryables", collection_id),
+            schema_type: "object".to_string(),
+            title: collection.title.clone(),
+            properties: serde_json::Value::Object(properties),
+            required: if required.is_empty() {
+                None
+            } else {
+                Some(required)
+            },
+        };
+
+        Ok(schema)
+    }
+
     /// Get user-defined columns (excludes system columns and geometry)
     pub async fn get_user_columns(
         &self,
