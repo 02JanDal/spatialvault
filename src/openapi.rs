@@ -226,7 +226,7 @@ pub fn docs_routes() -> ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{conformance, landing, stac};
+    use crate::api::{conformance, landing};
 
     fn test_config() -> Config {
         Config {
@@ -294,19 +294,19 @@ mod tests {
     }
 
     #[test]
-    fn test_openapi_includes_stac_routes() {
+    fn test_openapi_includes_landing_route() {
         let config = test_config();
         let mut openapi = create_openapi(&config);
 
         let _router = ApiRouter::new()
-            .merge(stac::catalog::routes())
+            .merge(landing::routes())
             .finish_api(&mut openapi);
 
         let paths = openapi.paths.as_ref().unwrap();
 
         assert!(
-            paths.paths.contains_key("/stac"),
-            "STAC catalog route should be registered"
+            paths.paths.contains_key("/"),
+            "Landing page route should be registered"
         );
     }
 

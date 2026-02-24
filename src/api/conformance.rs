@@ -83,54 +83,57 @@ pub mod classes {
         "http://www.opengis.net/spec/ogcapi-features-3/1.0/conf/queryables";
 }
 
-async fn get_conformance() -> Json<Conformance> {
-    let conformance = Conformance {
-        conforms_to: vec![
-            // OGC API Common
-            classes::COMMON_CORE.to_string(),
-            classes::COMMON_LANDING.to_string(),
-            classes::COMMON_JSON.to_string(),
-            classes::COMMON_OAS30.to_string(),
-            // OGC API Features
-            classes::FEATURES_CORE.to_string(),
-            classes::FEATURES_GEOJSON.to_string(),
-            classes::FEATURES_OAS30.to_string(),
-            classes::FEATURES_CRS.to_string(),
-            // OGC API Features Part 4 - CRUD
-            classes::FEATURES_CREATE_REPLACE_DELETE.to_string(),
-            classes::FEATURES_UPDATE.to_string(),
-            classes::FEATURES_OPTIMISTIC_LOCKING_ETAGS.to_string(),
-            // OGC API Tiles
-            classes::TILES_CORE.to_string(),
-            classes::TILES_TILESET.to_string(),
-            // OGC API Coverages
-            classes::COVERAGES_CORE.to_string(),
-            classes::COVERAGES_GEOTIFF.to_string(),
-            // OGC API Processes
-            classes::PROCESSES_CORE.to_string(),
-            classes::PROCESSES_JSON.to_string(),
-            classes::PROCESSES_OGC_PROCESS.to_string(),
-            classes::PROCESSES_JOB_LIST.to_string(),
-            classes::PROCESSES_DISMISS.to_string(),
-            // STAC Core
-            classes::STAC_CORE.to_string(),
-            classes::STAC_COLLECTIONS.to_string(),
-            classes::STAC_FEATURES.to_string(),
-            classes::STAC_ITEM_SEARCH.to_string(),
-            // STAC Transaction Extensions
-            classes::STAC_COLLECTION_TRANSACTION.to_string(),
-            classes::STAC_ITEM_TRANSACTION.to_string(),
-            // CQL2
-            classes::CQL2_TEXT.to_string(),
-            classes::CQL2_JSON.to_string(),
-            // OGC API Features Part 3 - Filter
-            classes::FEATURES_FILTER.to_string(),
-            // OGC API Features Part 3 - Queryables
-            classes::FEATURES_QUERYABLES.to_string(),
-        ],
-    };
+/// Returns the full list of conformance class URIs
+pub fn conforms_to() -> Vec<String> {
+    vec![
+        // OGC API Common
+        classes::COMMON_CORE.to_string(),
+        classes::COMMON_LANDING.to_string(),
+        classes::COMMON_JSON.to_string(),
+        classes::COMMON_OAS30.to_string(),
+        // OGC API Features
+        classes::FEATURES_CORE.to_string(),
+        classes::FEATURES_GEOJSON.to_string(),
+        classes::FEATURES_OAS30.to_string(),
+        classes::FEATURES_CRS.to_string(),
+        // OGC API Features Part 4 - CRUD
+        classes::FEATURES_CREATE_REPLACE_DELETE.to_string(),
+        classes::FEATURES_UPDATE.to_string(),
+        classes::FEATURES_OPTIMISTIC_LOCKING_ETAGS.to_string(),
+        // OGC API Tiles
+        classes::TILES_CORE.to_string(),
+        classes::TILES_TILESET.to_string(),
+        // OGC API Coverages
+        classes::COVERAGES_CORE.to_string(),
+        classes::COVERAGES_GEOTIFF.to_string(),
+        // OGC API Processes
+        classes::PROCESSES_CORE.to_string(),
+        classes::PROCESSES_JSON.to_string(),
+        classes::PROCESSES_OGC_PROCESS.to_string(),
+        classes::PROCESSES_JOB_LIST.to_string(),
+        classes::PROCESSES_DISMISS.to_string(),
+        // STAC Core
+        classes::STAC_CORE.to_string(),
+        classes::STAC_COLLECTIONS.to_string(),
+        classes::STAC_FEATURES.to_string(),
+        classes::STAC_ITEM_SEARCH.to_string(),
+        // STAC Transaction Extensions
+        classes::STAC_COLLECTION_TRANSACTION.to_string(),
+        classes::STAC_ITEM_TRANSACTION.to_string(),
+        // CQL2
+        classes::CQL2_TEXT.to_string(),
+        classes::CQL2_JSON.to_string(),
+        // OGC API Features Part 3 - Filter
+        classes::FEATURES_FILTER.to_string(),
+        // OGC API Features Part 3 - Queryables
+        classes::FEATURES_QUERYABLES.to_string(),
+    ]
+}
 
-    Json(conformance)
+async fn get_conformance() -> Json<Conformance> {
+    Json(Conformance {
+        conforms_to: conforms_to(),
+    })
 }
 
 fn get_conformance_docs(op: TransformOperation) -> TransformOperation {

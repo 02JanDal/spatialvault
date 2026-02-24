@@ -40,14 +40,20 @@ fn default_true() -> bool {
     true
 }
 
-/// OGC API Collection response
+/// OGC API / STAC Collection response
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionResponse {
+    #[serde(rename = "type")]
+    pub collection_type: String,
+    pub stac_version: String,
+    pub stac_extensions: Vec<String>,
     pub id: String,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
     pub links: Vec<Link>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extent: Option<Extent>,

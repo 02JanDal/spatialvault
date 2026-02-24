@@ -137,8 +137,7 @@ fn build_router(
     let public_routes = ApiRouter::new()
         .merge(landing::routes())
         .merge(conformance::routes())
-        .merge(openapi::docs_routes())
-        .merge(stac::catalog::routes());
+        .merge(openapi::docs_routes());
 
     // Protected routes (auth required)
     let protected_routes = ApiRouter::new()

@@ -96,6 +96,9 @@ fn build_collection_response(
         _ => {}
     }
 
+    // Root link (STAC root = landing page)
+    links.push(Link::new(base_url, rel::ROOT).with_type(media_type::JSON));
+
     // Add extended links for detail view (parent and schema)
     if include_extended_links {
         // Parent link back to collections list
@@ -125,9 +128,13 @@ fn build_collection_response(
     }
 
     CollectionResponse {
+        collection_type: "Collection".to_string(),
+        stac_version: "1.0.0".to_string(),
+        stac_extensions: vec![],
         id: id.clone(),
         title: collection.title.clone(),
         description: collection.description.clone(),
+        license: None,
         links,
         extent,
         item_type: Some("feature".to_string()),

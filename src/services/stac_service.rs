@@ -256,7 +256,7 @@ impl StacService {
                                 rel::COLLECTION,
                             )
                             .with_type(media_type::JSON),
-                            Link::new(format!("{}/stac", self.base_url), rel::ROOT)
+                            Link::new(&self.base_url, rel::ROOT)
                                 .with_type(media_type::JSON),
                         ],
                         assets: item_assets,

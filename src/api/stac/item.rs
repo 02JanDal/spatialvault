@@ -114,9 +114,9 @@ pub async fn search_get(
         collection_type: "FeatureCollection".to_string(),
         features: results.items,
         links: vec![
-            Link::new(format!("{}/stac/search", base_url), rel::SELF)
+            Link::new(format!("{}/search", base_url), rel::SELF)
                 .with_type(media_type::GEOJSON),
-            Link::new(format!("{}/stac", base_url), rel::ROOT).with_type(media_type::JSON),
+            Link::new(base_url, rel::ROOT).with_type(media_type::JSON),
         ],
         context: Some(StacContext {
             returned: results.returned,
@@ -152,9 +152,9 @@ pub async fn search_post(
         collection_type: "FeatureCollection".to_string(),
         features: results.items,
         links: vec![
-            Link::new(format!("{}/stac/search", base_url), rel::SELF)
+            Link::new(format!("{}/search", base_url), rel::SELF)
                 .with_type(media_type::GEOJSON),
-            Link::new(format!("{}/stac", base_url), rel::ROOT).with_type(media_type::JSON),
+            Link::new(base_url, rel::ROOT).with_type(media_type::JSON),
         ],
         context: Some(StacContext {
             returned: results.returned,
@@ -180,7 +180,7 @@ fn search_post_docs(op: TransformOperation) -> TransformOperation {
 pub fn routes(service: Arc<StacService>) -> ApiRouter {
     ApiRouter::new()
         .api_route(
-            "/stac/search",
+            "/search",
             get_with(search_get, search_get_docs).post_with(search_post, search_post_docs),
         )
         .with_state(service)
