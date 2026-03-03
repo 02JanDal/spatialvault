@@ -8,13 +8,16 @@ use crate::config::Config;
 use aide::{
     axum::{ApiRouter, routing::get_with},
     openapi::{
-
         Components, Contact, ExternalDocumentation, Info, License, OpenApi, ReferenceOr, Server,
         Tag,
     },
     transform::TransformOperation,
 };
-use axum::{Extension, http::header, response::{IntoResponse, Response}};
+use axum::{
+    Extension,
+    http::header,
+    response::{IntoResponse, Response},
+};
 use indexmap::IndexMap;
 use schemars::schema_for;
 use std::sync::Arc;
@@ -212,11 +215,7 @@ fn schemars_to_openapi_schema<T: schemars::JsonSchema>() -> aide::openapi::Schem
 pub async fn openapi_handler(Extension(api): Extension<Arc<OpenApi>>) -> Response {
     use crate::api::common::media_type;
     let body = serde_json::to_string(&*api).unwrap();
-    (
-        [(header::CONTENT_TYPE, media_type::OPENAPI_JSON)],
-        body,
-    )
-        .into_response()
+    ([(header::CONTENT_TYPE, media_type::OPENAPI_JSON)], body).into_response()
 }
 
 fn openapi_handler_docs(op: TransformOperation) -> TransformOperation {

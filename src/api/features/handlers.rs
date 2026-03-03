@@ -193,7 +193,10 @@ pub async fn list_features(
     for feature in &mut features {
         feature.links = Some(vec![
             Link::new(
-                format!("{}/collections/{}/items/{}", base_url, collection_id, feature.id),
+                format!(
+                    "{}/collections/{}/items/{}",
+                    base_url, collection_id, feature.id
+                ),
                 rel::SELF,
             )
             .with_type(media_type::GEOJSON),

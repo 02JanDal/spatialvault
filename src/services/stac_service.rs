@@ -162,7 +162,8 @@ impl StacService {
                 let is_open = |s: &str| s.is_empty() || s == "..";
                 if is_open(parts[0]) && is_open(parts[1]) {
                     return Err(BadRequest {
-                        message: "Invalid datetime interval: both bounds cannot be open".to_string(),
+                        message: "Invalid datetime interval: both bounds cannot be open"
+                            .to_string(),
                     }
                     .build());
                 }
@@ -214,7 +215,11 @@ impl StacService {
             tables
                 .iter()
                 .map(|(_, table, has_datetime)| {
-                    let dt = if *has_datetime { datetime_clause.as_str() } else { "" };
+                    let dt = if *has_datetime {
+                        datetime_clause.as_str()
+                    } else {
+                        ""
+                    };
                     format!("SELECT COUNT(*) as cnt FROM {table} i WHERE {where_clause}{dt}")
                 })
                 .join(" UNION ALL ")
@@ -244,7 +249,11 @@ impl StacService {
                     } else {
                         "i._id"
                     };
-                    let dt = if *has_datetime { datetime_clause.as_str() } else { "" };
+                    let dt = if *has_datetime {
+                        datetime_clause.as_str()
+                    } else {
+                        ""
+                    };
                     format!(
                         r#"(SELECT
                 i._id,
@@ -345,8 +354,7 @@ impl StacService {
                                 rel::COLLECTION,
                             )
                             .with_type(media_type::JSON),
-                            Link::new(&self.base_url, rel::ROOT)
-                                .with_type(media_type::JSON),
+                            Link::new(&self.base_url, rel::ROOT).with_type(media_type::JSON),
                         ],
                         assets: item_assets,
                         collection,

@@ -23,9 +23,9 @@ pub struct LandingPage {
     pub id: String,
     pub title: String,
     pub description: String,
-    #[serde(rename = "stac_version")]
+    #[serde(rename = "stacVersion")]
     pub stac_version: String,
-    #[serde(rename = "stac_extensions")]
+    #[serde(rename = "stacExtensions")]
     pub stac_extensions: Vec<String>,
     pub conforms_to: Vec<String>,
     pub links: Vec<Link>,
@@ -90,7 +90,9 @@ async fn get_landing_page(
 
 fn get_landing_page_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Landing page")
-        .description("Returns the landing page / STAC catalog root with links to the API capabilities")
+        .description(
+            "Returns the landing page / STAC catalog root with links to the API capabilities",
+        )
         .tag("Core")
         .response_with::<200, Json<LandingPage>, _>(|res| res.description("Landing page response"))
 }

@@ -511,7 +511,7 @@ impl CollectionService {
 
         // Get current collection with version check
         let current: Option<Collection> = sqlx::query_as(
-            "SELECT * FROM spatialvault.collections WHERE canonical_name = $1 FOR UPDATE",
+            "SELECT *, NULL as last_import_job FROM spatialvault.collections WHERE canonical_name = $1 FOR UPDATE",
         )
         .bind(collection_id)
         .fetch_optional(&mut *tx)
@@ -565,7 +565,7 @@ impl CollectionService {
                 version = version + 1,
                 updated_at = NOW()
             WHERE id = $5
-            RETURNING *
+            RETURNING *, NULL as last_import_job
             "#,
         )
         .bind(final_name)
@@ -695,7 +695,7 @@ impl CollectionService {
 
         // Get current collection with version check
         let current: Option<Collection> = sqlx::query_as(
-            "SELECT * FROM spatialvault.collections WHERE canonical_name = $1 FOR UPDATE",
+            "SELECT *, NULL as last_import_job FROM spatialvault.collections WHERE canonical_name = $1 FOR UPDATE",
         )
         .bind(collection_id)
         .fetch_optional(&mut *tx)
@@ -736,7 +736,7 @@ impl CollectionService {
                 version = version + 1,
                 updated_at = NOW()
             WHERE id = $3
-            RETURNING *
+            RETURNING *, NULL as last_import_job
             "#,
         )
         .bind(title)
@@ -819,7 +819,7 @@ impl CollectionService {
         let mut tx = self.db.pool().begin().await?;
 
         let collection: Option<Collection> = sqlx::query_as(
-            "SELECT * FROM spatialvault.collections WHERE canonical_name = $1 FOR UPDATE",
+            "SELECT *, NULL as last_import_job FROM spatialvault.collections WHERE canonical_name = $1 FOR UPDATE",
         )
         .bind(collection_id)
         .fetch_optional(&mut *tx)

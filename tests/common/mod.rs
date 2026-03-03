@@ -591,7 +591,7 @@ impl TestApp {
             db: self.db.clone(),
             s3: self.s3.clone(),
             config: self.config.clone(),
-            _postgis: None,      // Don't own the containers
+            _postgis: None, // Don't own the containers
             _cloudserver: None,
         }
     }

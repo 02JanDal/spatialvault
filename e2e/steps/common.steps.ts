@@ -111,6 +111,17 @@ Then(
         );
     }
 );
+Then(
+    "the response {string} should be {int}",
+    function (this: SpatialVaultWorld, path: string, expected: number) {
+        const value = this.getNestedValue(path);
+        assert.equal(
+            Number(value),
+            expected,
+            `Expected "${path}" to be "${expected}", got: ${JSON.stringify(value)}`
+        );
+    }
+);
 
 Then(
     "the response {string} should exist",

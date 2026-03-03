@@ -118,8 +118,7 @@ pub async fn search_get(
         collection_type: "FeatureCollection".to_string(),
         features: results.items,
         links: vec![
-            Link::new(format!("{}/search", base_url), rel::SELF)
-                .with_type(media_type::GEOJSON),
+            Link::new(format!("{}/search", base_url), rel::SELF).with_type(media_type::GEOJSON),
             Link::new(base_url, rel::ROOT).with_type(media_type::JSON),
         ],
         context: Some(StacContext {
@@ -160,8 +159,7 @@ pub async fn search_post(
         collection_type: "FeatureCollection".to_string(),
         features: results.items,
         links: vec![
-            Link::new(format!("{}/search", base_url), rel::SELF)
-                .with_type(media_type::GEOJSON),
+            Link::new(format!("{}/search", base_url), rel::SELF).with_type(media_type::GEOJSON),
             Link::new(base_url, rel::ROOT).with_type(media_type::JSON),
         ],
         context: Some(StacContext {
