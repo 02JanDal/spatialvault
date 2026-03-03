@@ -3,3 +3,5 @@
 /e2e/node_modules/
 /e2e/reports/
 /*.rlib
+/dist/
+/node_modules/
