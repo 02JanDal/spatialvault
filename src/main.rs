@@ -12,7 +12,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use spatialvault::{
     api::{collections, conformance, coverages, features, landing, processes, stac, tiles},
-    auth::{AuthState, OidcValidator},
+    auth::{self, AuthState, OidcValidator},
     config::Config,
     db::Database,
     openapi,
@@ -86,27 +86,53 @@ async fn main() -> anyhow::Result<()> {
         // Run as HTTP server
         tracing::info!("Starting SpatialVault on {}:{}", config.host, config.port);
 
-        // Initialize OIDC validator
-        let oidc_validator = Arc::new(OidcValidator::new(config.oidc.clone()).await?);
-        tracing::info!("OIDC validator initialized");
-
-        // Build auth state
-        let auth_state = AuthState {
-            validator: oidc_validator,
-        };
-
         // Build router with OpenAPI generation
-        let app = build_router(
-            config.clone(),
-            auth_state,
-            storage,
-            collection_service,
-            feature_service,
-            tile_service,
-            coverage_service,
-            process_service,
-            stac_service,
-        );
+        let app = if config.auth.disabled {
+            tracing::warn!("Authentication is DISABLED — all requests will use an anonymous user");
+            build_router_no_auth(
+                config.clone(),
+                storage,
+                collection_service,
+                feature_service,
+                tile_service,
+                coverage_service,
+                process_service,
+                stac_service,
+            )
+        } else {
+            // Initialize OIDC validator
+            let oidc_config = config.oidc.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "OIDC configuration is required when auth is not disabled. \
+                     Set SPATIALVAULT__OIDC__ISSUER_URL or set SPATIALVAULT__AUTH__DISABLED=true"
+                )
+            })?;
+            let oidc_validator = Arc::new(OidcValidator::new(oidc_config).await?);
+            tracing::info!("OIDC validator initialized");
+
+            if config.auth.dev_auth {
+                tracing::warn!(
+                    "Dev auth is ENABLED — 'Authorization: User <name>' headers will bypass OIDC"
+                );
+            }
+
+            let auth_state = AuthState {
+                validator: oidc_validator,
+                dev_auth: config.auth.dev_auth,
+            };
+
+            build_router(
+                config.clone(),
+                auth_state,
+                storage,
+                collection_service,
+                feature_service,
+                tile_service,
+                coverage_service,
+                process_service,
+                stac_service,
+            )
+        };
 
         // Start server
         let addr = format!("{}:{}", config.host, config.port);
@@ -133,11 +159,15 @@ fn build_router(
     // Create base OpenAPI spec with metadata
     let mut openapi = openapi::create_openapi(&config);
 
-    // Public routes (no auth required)
+    // Public routes (optional auth — landing page uses it for currentUser)
     let public_routes = ApiRouter::new()
         .merge(landing::routes())
         .merge(conformance::routes())
-        .merge(openapi::docs_routes());
+        .merge(openapi::docs_routes())
+        .layer(middleware::from_fn_with_state(
+            auth_state.clone(),
+            spatialvault::auth::optional_auth_middleware,
+        ));
 
     // Protected routes (auth required)
     let protected_routes = ApiRouter::new()
@@ -173,6 +203,67 @@ fn build_router(
     let openapi = Arc::new(openapi);
 
     // Convert to regular Router and add extensions/layers
+    Router::from(api_router)
+        .layer(Extension(config))
+        .layer(Extension(openapi))
+        .layer(middleware::from_fn(
+            spatialvault::api::link_header_middleware,
+        ))
+        .layer(CompressionLayer::new())
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
+        .layer(TraceLayer::new_for_http())
+}
+
+fn build_router_no_auth(
+    config: Arc<Config>,
+    storage: Arc<S3Storage>,
+    collection_service: Arc<CollectionService>,
+    feature_service: Arc<FeatureService>,
+    tile_service: Arc<TileService>,
+    coverage_service: Arc<CoverageService>,
+    process_service: Arc<ProcessService>,
+    stac_service: Arc<StacService>,
+) -> Router {
+    let mut openapi = openapi::create_openapi(&config);
+
+    let public_routes = ApiRouter::new()
+        .merge(landing::routes())
+        .merge(conformance::routes())
+        .merge(openapi::docs_routes())
+        .layer(middleware::from_fn(auth::no_auth_middleware));
+
+    let protected_routes = ApiRouter::new()
+        .merge(collections::handlers::routes(
+            storage.clone(),
+            collection_service.clone(),
+            process_service.clone(),
+        ))
+        .merge(collections::sharing::routes(collection_service.clone()))
+        .merge(features::handlers::routes(storage, feature_service))
+        .merge(tiles::handlers::routes(
+            tile_service,
+            collection_service.clone(),
+        ))
+        .merge(coverages::handlers::routes(
+            coverage_service,
+            collection_service.clone(),
+        ))
+        .merge(processes::handlers::routes(process_service))
+        .merge(stac::item::routes(stac_service))
+        .layer(middleware::from_fn(auth::no_auth_middleware));
+
+    let api_router = ApiRouter::new()
+        .merge(public_routes)
+        .merge(protected_routes)
+        .finish_api(&mut openapi);
+
+    let openapi = Arc::new(openapi);
+
     Router::from(api_router)
         .layer(Extension(config))
         .layer(Extension(openapi))

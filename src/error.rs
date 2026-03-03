@@ -141,8 +141,20 @@ impl IntoResponse for AppError {
                 )
             }
             AppError::Database { source, .. } => {
-                // Check for PostgreSQL permission errors (42501 = insufficient_privilege)
                 if let sqlx::Error::Database(db_err) = &source {
+                    // 23505 = unique_violation (e.g. duplicate collection name)
+                    if db_err.code().as_deref() == Some("23505") {
+                        tracing::info!("Unique constraint violation: {}", db_err);
+                        return (
+                            StatusCode::CONFLICT,
+                            Json(ErrorResponse {
+                                code: "Conflict".to_string(),
+                                description: "Resource already exists".to_string(),
+                            }),
+                        )
+                            .into_response();
+                    }
+                    // 42501 = insufficient_privilege
                     if db_err.code().as_deref() == Some("42501") {
                         tracing::info!("Database permission error: {}", db_err);
                         return (

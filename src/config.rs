@@ -9,7 +9,9 @@ pub struct Config {
     #[serde(default = "default_port")]
     pub port: u16,
     pub database: DatabaseConfig,
-    pub oidc: OidcConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
+    pub oidc: Option<OidcConfig>,
     #[serde(default)]
     pub s3: S3Config,
     #[serde(default = "default_base_url")]
@@ -23,6 +25,7 @@ impl fmt::Debug for Config {
             .field("host", &self.host)
             .field("port", &self.port)
             .field("database", &self.database)
+            .field("auth", &self.auth)
             .field("oidc", &self.oidc)
             .field("s3", &self.s3)
             .field("base_url", &self.base_url)
@@ -61,6 +64,16 @@ impl fmt::Debug for DatabaseConfig {
 
 fn default_max_connections() -> u32 {
     10
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AuthConfig {
+    #[serde(default)]
+    pub disabled: bool,
+    /// Allow `Authorization: User <username>` headers to bypass OIDC.
+    /// For local development only — never enable in production.
+    #[serde(default)]
+    pub dev_auth: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

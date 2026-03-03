@@ -15,7 +15,7 @@ impl S3Storage {
         let mut builder = AmazonS3Builder::new().with_bucket_name(&config.bucket);
 
         if let Some(ref endpoint) = config.endpoint {
-            builder = builder.with_endpoint(endpoint);
+            builder = builder.with_endpoint(endpoint).with_allow_http(true);
         }
 
         if let Some(ref region) = config.region {

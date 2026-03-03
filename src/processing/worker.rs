@@ -671,7 +671,7 @@ impl JobWorker {
         let mut failed = 0;
 
         loop {
-            let batch = importer.read_features_batch(batch_size)?;
+            let batch = importer.read_features_batch(imported, batch_size)?;
             if batch.is_empty() {
                 break;
             }

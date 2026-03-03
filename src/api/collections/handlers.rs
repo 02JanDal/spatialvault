@@ -60,15 +60,18 @@ fn build_collection_response(
     extent: Option<Extent>,
     storage_crs: i32,
     include_extended_links: bool,
+    summaries: Option<serde_json::Value>,
 ) -> CollectionResponse {
     let id = &collection.canonical_name;
 
     // Base links that always appear
     let mut links = vec![
         Link::new(format!("{}/collections/{}", base_url, id), rel::SELF)
-            .with_type(media_type::JSON),
+            .with_type(media_type::JSON)
+            .with_title("This collection"),
         Link::new(format!("{}/collections/{}/items", base_url, id), rel::ITEMS)
-            .with_type(media_type::GEOJSON),
+            .with_type(media_type::GEOJSON)
+            .with_title("Items in this collection"),
     ];
 
     // Add type-specific links (always included for both list and detail)
@@ -76,34 +79,43 @@ fn build_collection_response(
         "vector" => {
             links.push(
                 Link::new(format!("{}/collections/{}/tiles", base_url, id), "tiles")
-                    .with_type(media_type::JSON),
+                    .with_type(media_type::JSON)
+                    .with_title("Vector tiles"),
             );
         }
         "raster" => {
             // Raster collections support both tiles and coverage endpoints
             links.push(
                 Link::new(format!("{}/collections/{}/tiles", base_url, id), "tiles")
-                    .with_type(media_type::JSON),
+                    .with_type(media_type::JSON)
+                    .with_title("Raster tiles"),
             );
             links.push(
                 Link::new(
                     format!("{}/collections/{}/coverage", base_url, id),
                     "coverage",
                 )
-                .with_type(media_type::JSON),
+                .with_type(media_type::JSON)
+                .with_title("Coverage data"),
             );
         }
         _ => {}
     }
 
     // Root link (STAC root = landing page)
-    links.push(Link::new(base_url, rel::ROOT).with_type(media_type::JSON));
+    links.push(
+        Link::new(base_url, rel::ROOT)
+            .with_type(media_type::JSON)
+            .with_title("Root catalog"),
+    );
 
     // Add extended links for detail view (parent and schema)
     if include_extended_links {
         // Parent link back to collections list
         links.push(
-            Link::new(format!("{}/collections", base_url), rel::PARENT).with_type(media_type::JSON),
+            Link::new(format!("{}/collections", base_url), rel::PARENT)
+                .with_type(media_type::JSON)
+                .with_title("Collections"),
         );
 
         // Add schema link
@@ -127,6 +139,17 @@ fn build_collection_response(
         );
     }
 
+    if let Some(last_import_job) = &collection.last_import_job {
+        links.push(
+            Link::new(
+                format!("{}/jobs/{}", base_url, last_import_job),
+                rel::MONITOR,
+            )
+            .with_type(media_type::JSON)
+            .with_title("Last import job for this collection"),
+        );
+    }
+
     CollectionResponse {
         collection_type: "Collection".to_string(),
         stac_version: "1.0.0".to_string(),
@@ -134,12 +157,13 @@ fn build_collection_response(
         id: id.clone(),
         title: collection.title.clone(),
         description: collection.description.clone(),
-        license: None,
+        license: "proprietary".to_string(),
         links,
         extent,
         item_type: Some("feature".to_string()),
         crs: Some(build_crs_list(Some(storage_crs))),
         storage_crs: Some(crs::srid_to_uri(storage_crs)),
+        summaries,
     }
 }
 
@@ -155,16 +179,19 @@ pub async fn list_collections(
 
     let base_url = &config.base_url;
 
-    // Compute extent for each collection
+    // Compute extent and summaries for each collection
     let mut collection_responses = Vec::with_capacity(collections.len());
     for c in collections.iter() {
-        let extent = service.compute_extent(&c.as_collection()).await?;
+        let col = c.as_collection();
+        let extent = service.compute_extent(&col).await?;
+        let summaries = service.compute_summaries(&col).await?;
         collection_responses.push(build_collection_response(
-            &c.as_collection(),
+            &col,
             base_url,
             extent,
             c.storage_crs,
             false, // List view: don't include parent and schema links
+            summaries,
         ));
     }
 
@@ -173,6 +200,7 @@ pub async fn list_collections(
         collections: collection_responses,
         links: vec![
             Link::new(format!("{}/collections", base_url), rel::SELF).with_type(media_type::JSON),
+            Link::new(base_url, rel::ROOT).with_type(media_type::JSON),
         ],
         number_matched: total_count as u64,
     };
@@ -207,18 +235,21 @@ pub async fn get_collection(
         .get_collection(&user.username, &path.collection_id)
         .await?;
 
-    // Get computed extent
-    let extent = service.compute_extent(&collection.as_collection()).await?;
+    // Get computed extent and summaries
+    let col = collection.as_collection();
+    let extent = service.compute_extent(&col).await?;
+    let summaries = service.compute_summaries(&col).await?;
 
     let base_url = &config.base_url;
 
     // Build the response using the common helper, with all links included
     let response = build_collection_response(
-        &collection.as_collection(),
+        &col,
         base_url,
         extent,
         collection.storage_crs,
         true,
+        summaries,
     );
 
     Ok((
@@ -315,7 +346,7 @@ pub async fn create_collection(
 
         import_job_inputs = Some(
             serde_json::to_value(ImportVectorInputs {
-                collection_id: collection_id.to_string(),
+                collection_id: canonical_name.clone(),
                 file_key: key,
             })
             .unwrap(),
@@ -349,6 +380,7 @@ pub async fn create_collection(
         None,         // extent not computed for create response
         metadata.crs, // storage_crs from request
         true,         // include all links for consistency
+        None,         // no summaries for freshly created collection
     );
 
     let location_value = format!("{}/collections/{}", base_url, &collection.canonical_name);
@@ -405,6 +437,7 @@ pub async fn patch_collection(
         service.compute_extent(&collection).await?,
         service.get_storage_crs(&collection).await?.unwrap_or(4326),
         true, // include all links for consistency
+        service.compute_summaries(&collection).await?,
     );
 
     Ok((
@@ -470,6 +503,7 @@ pub async fn update_collection(
         service.compute_extent(&collection).await?,
         service.get_storage_crs(&collection).await?.unwrap_or(4326),
         true, // include all links for consistency
+        service.compute_summaries(&collection).await?,
     );
 
     Ok((

@@ -29,7 +29,7 @@ use spatialvault::{
         stac, tiles,
     },
     auth::AuthenticatedUser,
-    config::{Config, DatabaseConfig, OidcConfig, S3Config},
+    config::{AuthConfig, Config, DatabaseConfig, S3Config},
     db::Database,
     openapi,
     services::{
@@ -118,6 +118,92 @@ impl PostgisContainer {
 }
 
 // ============================================================================
+// CloudServer Container (S3-compatible)
+// ============================================================================
+
+/// Zenko CloudServer container for S3 integration tests
+pub struct CloudServerContainer {
+    _container: ContainerAsync<GenericImage>,
+    port: u16,
+}
+
+impl CloudServerContainer {
+    const ACCESS_KEY: &str = "accessKey1";
+    const SECRET_KEY: &str = "verySecretKey1";
+
+    /// Start a new CloudServer container
+    pub async fn start() -> Self {
+        let container = GenericImage::new("zenko/cloudserver", "latest")
+            .with_exposed_port(8000.tcp())
+            .with_wait_for(WaitFor::message_on_stdout("server started"))
+            .with_env_var("SCALITY_ACCESS_KEY_ID", Self::ACCESS_KEY)
+            .with_env_var("SCALITY_SECRET_ACCESS_KEY", Self::SECRET_KEY)
+            .with_env_var("S3DATA", "mem")
+            .start()
+            .await
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Failed to start CloudServer container: {:?}\n\n\
+                    To run integration tests with S3, ensure Docker is available.",
+                    e
+                )
+            });
+
+        let port = container
+            .get_host_port_ipv4(8000)
+            .await
+            .expect("Failed to get CloudServer port");
+
+        let cs = Self {
+            _container: container,
+            port,
+        };
+        cs
+    }
+
+    /// Get the S3 endpoint URL
+    pub fn endpoint(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    /// Create a bucket via the AWS SDK
+    pub async fn create_bucket(&self, bucket: &str) {
+        let config = aws_sdk_s3::config::Builder::new()
+            .endpoint_url(self.endpoint())
+            .region(aws_sdk_s3::config::Region::new("us-east-1"))
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                Self::ACCESS_KEY,
+                Self::SECRET_KEY,
+                None,
+                None,
+                "test",
+            ))
+            .behavior_version_latest()
+            .force_path_style(true)
+            .build();
+
+        let client = aws_sdk_s3::Client::from_conf(config);
+        client
+            .create_bucket()
+            .bucket(bucket)
+            .send()
+            .await
+            .expect("Failed to create S3 bucket");
+    }
+
+    /// Build an S3Config pointing to this container
+    pub fn s3_config(&self, bucket: &str) -> S3Config {
+        S3Config {
+            endpoint: Some(self.endpoint()),
+            bucket: bucket.to_string(),
+            region: Some("us-east-1".to_string()),
+            access_key_id: Some(Self::ACCESS_KEY.to_string()),
+            secret_access_key: Some(Self::SECRET_KEY.to_string()),
+        }
+    }
+}
+
+// ============================================================================
 // Mock Authentication
 // ============================================================================
 
@@ -201,7 +287,8 @@ pub struct TestApp {
     pub db: Arc<Database>,
     pub s3: Arc<S3Storage>,
     pub config: Arc<Config>,
-    _container: Option<PostgisContainer>,
+    _postgis: Option<PostgisContainer>,
+    _cloudserver: Option<CloudServerContainer>,
 }
 
 impl TestApp {
@@ -214,8 +301,13 @@ impl TestApp {
     pub async fn with_auth(mock_auth: MockAuthState) -> Self {
         init_logging();
 
-        // Start PostGIS container
-        let container = PostgisContainer::start().await;
+        // Start containers in parallel
+        let (postgis, cloudserver) =
+            tokio::join!(PostgisContainer::start(), CloudServerContainer::start());
+
+        // Create test bucket
+        let test_bucket = "spatialvault-test";
+        cloudserver.create_bucket(test_bucket).await;
 
         // Wait a bit for the database to be fully ready
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -225,14 +317,15 @@ impl TestApp {
             host: "127.0.0.1".to_string(),
             port: 0, // Not used for in-process testing
             database: DatabaseConfig {
-                url: container.connection_url(),
+                url: postgis.connection_url(),
                 max_connections: 5,
             },
-            oidc: OidcConfig {
-                issuer_url: "http://localhost".to_string(), // Not used with mock auth
-                audience: "test".to_string(),
+            auth: AuthConfig {
+                disabled: true,
+                dev_auth: false,
             },
-            s3: S3Config::default(),
+            oidc: None,
+            s3: cloudserver.s3_config(test_bucket),
             base_url: "http://localhost:8080".to_string(),
         });
 
@@ -285,7 +378,8 @@ impl TestApp {
             db,
             s3: storage,
             config,
-            _container: Some(container),
+            _postgis: Some(postgis),
+            _cloudserver: Some(cloudserver),
         }
     }
 
@@ -497,7 +591,8 @@ impl TestApp {
             db: self.db.clone(),
             s3: self.s3.clone(),
             config: self.config.clone(),
-            _container: None, // Don't own the container
+            _postgis: None,      // Don't own the containers
+            _cloudserver: None,
         }
     }
 

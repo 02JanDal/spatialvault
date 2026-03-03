@@ -178,7 +178,8 @@ impl CollectionService {
                      AND f_geometry_column = 'geometry'
                      LIMIT 1),
                     4326
-                ) as storage_crs
+                ) as storage_crs,
+                NULL as last_import_job
             FROM spatialvault.collections c
             {}
             ORDER BY c.created_at DESC
@@ -212,8 +213,10 @@ impl CollectionService {
                      AND f_geometry_column = 'geometry'
                      LIMIT 1),
                     4326
-                ) as storage_crs
+                ) as storage_crs,
+                j.id as last_import_job
             FROM spatialvault.collections c
+            LEFT OUTER JOIN spatialvault.processes_jobs j ON c.canonical_name = j.inputs->>'collectionId'
             WHERE canonical_name = $1
               AND (
                   c.owner = $2
@@ -383,12 +386,12 @@ impl CollectionService {
         let mut tx = self.db.pool().begin().await?;
 
         // Insert collection metadata
-        let collection: Collection = sqlx::query_as(
+        let mut collection: Collection = sqlx::query_as(
             r#"
             INSERT INTO spatialvault.collections
             (id, canonical_name, owner, schema_name, table_name, collection_type, title, description)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING *
+            RETURNING *, NULL as last_import_job
             "#,
         )
         .bind(id)
@@ -479,12 +482,13 @@ impl CollectionService {
                 VALUES ($1, $2, $3, $4)
                 "#,
             )
-            .bind(job_id)
+            .bind(job_id.clone())
             .bind(process_id)
             .bind(job_username)
             .bind(inputs)
             .execute(&mut *tx)
             .await?;
+            collection.last_import_job = Some(job_id.to_string());
         }
 
         tx.commit().await?;
@@ -870,7 +874,119 @@ impl CollectionService {
             return Ok(None);
         }
 
+        // STAC requires temporal even when no temporal data exists
+        let temporal = temporal.or_else(|| {
+            Some(crate::api::common::TemporalExtent {
+                interval: vec![[None, None]],
+            })
+        });
+
         Ok(Some(Extent { spatial, temporal }))
+    }
+
+    /// Compute STAC summaries for a collection based on its user-defined columns.
+    /// Returns property-level statistics (min/max for numeric/date, type for string/boolean).
+    pub async fn compute_summaries(
+        &self,
+        collection: &Collection,
+    ) -> AppResult<Option<serde_json::Value>> {
+        let mut conn = self.db.pool().acquire().await?;
+        let columns = self.get_user_columns(&mut conn, collection).await?;
+        drop(conn);
+
+        if columns.is_empty() {
+            return Ok(None);
+        }
+
+        // Build SELECT aggregates for each column
+        let mut select_parts = Vec::new();
+        let mut col_meta: Vec<(&str, &str)> = Vec::new(); // (name, kind)
+
+        for col in &columns {
+            let quoted = quote_ident(&col.name);
+            match col.pg_type.as_str() {
+                "bigint" | "double precision" | "integer" | "real" | "numeric" | "smallint" => {
+                    select_parts.push(format!("MIN({quoted}), MAX({quoted})"));
+                    col_meta.push((&col.name, "range"));
+                }
+                "date" | "timestamp with time zone" | "timestamp without time zone" => {
+                    select_parts.push(format!("MIN({quoted})::text, MAX({quoted})::text"));
+                    col_meta.push((&col.name, "range"));
+                }
+                "boolean" => {
+                    // No aggregation needed, just declare the type
+                    col_meta.push((&col.name, "boolean"));
+                }
+                _ => {
+                    // text, character varying, etc. — just declare as string
+                    col_meta.push((&col.name, "string"));
+                }
+            }
+        }
+
+        let mut summaries = serde_json::Map::new();
+
+        if select_parts.is_empty() {
+            // All columns are string/boolean — no SQL needed
+            for (name, kind) in &col_meta {
+                match *kind {
+                    "boolean" => {
+                        summaries.insert(name.to_string(), serde_json::json!({"type": "boolean"}));
+                    }
+                    "string" => {
+                        summaries.insert(name.to_string(), serde_json::json!({"type": "string"}));
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            let sql = format!(
+                "SELECT {} FROM {}.{}",
+                select_parts.join(", "),
+                quote_ident(&collection.schema_name),
+                quote_ident(&collection.table_name),
+            );
+
+            let row = sqlx::query(&sql).fetch_optional(self.db.pool()).await?;
+
+            let mut idx = 0usize;
+            for (name, kind) in &col_meta {
+                match *kind {
+                    "range" => {
+                        if let Some(ref row) = row {
+                            use sqlx::Row;
+                            let min_val: Option<serde_json::Value> = row.try_get(idx).ok();
+                            let max_val: Option<serde_json::Value> = row.try_get(idx + 1).ok();
+                            let mut range = serde_json::Map::new();
+                            if let Some(v) = min_val {
+                                range.insert("minimum".to_string(), v);
+                            }
+                            if let Some(v) = max_val {
+                                range.insert("maximum".to_string(), v);
+                            }
+                            if !range.is_empty() {
+                                summaries
+                                    .insert(name.to_string(), serde_json::Value::Object(range));
+                            }
+                        }
+                        idx += 2;
+                    }
+                    "boolean" => {
+                        summaries.insert(name.to_string(), serde_json::json!({"type": "boolean"}));
+                    }
+                    "string" => {
+                        summaries.insert(name.to_string(), serde_json::json!({"type": "string"}));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if summaries.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(serde_json::Value::Object(summaries)))
+        }
     }
 
     pub async fn has_datetime(&self, collection: &Collection) -> AppResult<bool> {

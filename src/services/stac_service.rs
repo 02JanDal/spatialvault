@@ -8,8 +8,18 @@ use crate::api::common::{Assets, GeoJsonGeometry, Link, media_type, rel};
 use crate::api::stac::item::{StacItem, StacItemProperties, StacSearchParams};
 use crate::auth::quote_ident;
 use crate::db::Database;
-use crate::error::AppResult;
+use crate::error::{AppResult, BadRequest};
 use crate::services::{CollectionService, FeatureService};
+
+/// Validate an RFC 3339 datetime string, returning BadRequest on failure.
+fn parse_rfc3339(s: &str) -> AppResult<chrono::DateTime<chrono::FixedOffset>> {
+    chrono::DateTime::parse_from_rfc3339(s).map_err(|_| {
+        BadRequest {
+            message: format!("Invalid datetime: {}", s),
+        }
+        .build()
+    })
+}
 
 pub struct StacSearchResult {
     pub items: Vec<StacItem>,
@@ -84,38 +94,110 @@ impl StacService {
             where_clauses.push(format!("i._id::text IN ({})", quoted.join(", ")));
         }
 
-        // Filter by bbox
-        if let Some(ref bbox) = params.bbox {
-            let parts: Vec<f64> = bbox
-                .split(',')
-                .filter_map(|s| s.trim().parse().ok())
-                .collect();
-            if parts.len() == 4 {
-                where_clauses.push(format!(
-                    "ST_Intersects(i.geometry, ST_MakeEnvelope({}, {}, {}, {}, 4326))",
-                    parts[0], parts[1], parts[2], parts[3]
-                ));
+        // bbox and intersects are mutually exclusive
+        if params.bbox.is_some() && params.intersects.is_some() {
+            return Err(BadRequest {
+                message: "bbox and intersects are mutually exclusive".to_string(),
             }
+            .build());
         }
 
-        // Filter by datetime
+        // Filter by bbox
+        if let Some(ref bbox) = params.bbox {
+            let trimmed = bbox.trim();
+            if trimmed.contains('[') || trimmed.contains(']') {
+                return Err(BadRequest {
+                    message: "bbox must not contain brackets".to_string(),
+                }
+                .build());
+            }
+            let parts: Result<Vec<f64>, _> = trimmed
+                .split(',')
+                .map(|s| s.trim().parse::<f64>())
+                .collect();
+            let parts = parts.map_err(|_| {
+                BadRequest {
+                    message: "bbox values must be numbers".to_string(),
+                }
+                .build()
+            })?;
+            if parts.len() != 4 && parts.len() != 6 {
+                return Err(BadRequest {
+                    message: format!("bbox must have 4 or 6 values, got {}", parts.len()),
+                }
+                .build());
+            }
+            if parts[1] > parts[3] {
+                return Err(BadRequest {
+                    message: "bbox south latitude must not exceed north latitude".to_string(),
+                }
+                .build());
+            }
+            where_clauses.push(format!(
+                "ST_Intersects(i.geometry, ST_MakeEnvelope({}, {}, {}, {}, 4326))",
+                parts[0], parts[1], parts[2], parts[3]
+            ));
+        }
+
+        // Filter by intersects geometry
+        if let Some(ref intersects) = params.intersects {
+            where_clauses.push(format!(
+                "ST_Intersects(i.geometry, ST_GeomFromGeoJSON('{}'))",
+                intersects.replace('\'', "''")
+            ));
+        }
+
+        // Filter by datetime (only applied to tables with _datetime column)
+        let mut datetime_clauses: Vec<String> = Vec::new();
         if let Some(ref datetime) = params.datetime {
             if datetime.contains('/') {
                 let parts: Vec<&str> = datetime.split('/').collect();
-                if parts.len() == 2 {
-                    if parts[0] != ".." {
-                        where_clauses.push(format!("i._datetime >= '{}'", parts[0]));
+                if parts.len() != 2 {
+                    return Err(BadRequest {
+                        message: "Invalid datetime interval".to_string(),
                     }
-                    if parts[1] != ".." {
-                        where_clauses.push(format!("i._datetime <= '{}'", parts[1]));
+                    .build());
+                }
+                // Empty string or ".." means open-ended
+                let is_open = |s: &str| s.is_empty() || s == "..";
+                if is_open(parts[0]) && is_open(parts[1]) {
+                    return Err(BadRequest {
+                        message: "Invalid datetime interval: both bounds cannot be open".to_string(),
                     }
+                    .build());
+                }
+                let start = if !is_open(parts[0]) {
+                    let dt = parse_rfc3339(parts[0])?;
+                    datetime_clauses.push(format!("i._datetime >= '{}'", parts[0]));
+                    Some(dt)
+                } else {
+                    None
+                };
+                if !is_open(parts[1]) {
+                    let dt = parse_rfc3339(parts[1])?;
+                    if let Some(start_dt) = start {
+                        if start_dt > dt {
+                            return Err(BadRequest {
+                                message: "Invalid datetime interval: start must be before end"
+                                    .to_string(),
+                            }
+                            .build());
+                        }
+                    }
+                    datetime_clauses.push(format!("i._datetime <= '{}'", parts[1]));
                 }
             } else {
-                where_clauses.push(format!("i._datetime = '{}'", datetime));
+                parse_rfc3339(datetime)?;
+                datetime_clauses.push(format!("i._datetime = '{}'", datetime));
             }
         }
 
         let where_clause = where_clauses.join(" AND ");
+        let datetime_clause = if datetime_clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" AND {}", datetime_clauses.join(" AND "))
+        };
 
         // Early return if no matching collections found
         if tables.is_empty() {
@@ -126,11 +208,17 @@ impl StacService {
             });
         }
 
-        // Count query
-        let count_sql = tables
-            .iter()
-            .map(|(_, table, _)| format!("SELECT COUNT(*) FROM {table} i WHERE {where_clause}"))
-            .join(" UNION ALL ");
+        // Count query - sum counts from all tables
+        let count_sql = format!(
+            "SELECT COALESCE(SUM(cnt), 0)::bigint FROM ({}) sub",
+            tables
+                .iter()
+                .map(|(_, table, has_datetime)| {
+                    let dt = if *has_datetime { datetime_clause.as_str() } else { "" };
+                    format!("SELECT COUNT(*) as cnt FROM {table} i WHERE {where_clause}{dt}")
+                })
+                .join(" UNION ALL ")
+        );
         let count: (i64,) = sqlx::query_as(&count_sql).fetch_one(self.db.pool()).await?;
 
         // Build the system columns exclusion list for to_jsonb
@@ -140,23 +228,25 @@ impl StacService {
             .collect::<Vec<_>>()
             .join(" ");
 
-        // Data query - get items
-        let sql = tables
-            .iter()
-            .map(|(collection, table, has_datetime)| {
-                let datetime_col = if *has_datetime {
-                    "i._datetime"
-                } else {
-                    "NULL::timestamptz"
-                };
-                let order_col = if *has_datetime {
-                    "i._datetime DESC NULLS LAST"
-                } else {
-                    "i._id"
-                };
-                format!(
-                    r#"
-            SELECT
+        // Data query - get items (wrap each SELECT in parens for valid UNION ALL with ORDER BY)
+        let sql = format!(
+            "{} LIMIT {}",
+            tables
+                .iter()
+                .map(|(collection, table, has_datetime)| {
+                    let datetime_col = if *has_datetime {
+                        "i._datetime"
+                    } else {
+                        "i._created_at"
+                    };
+                    let order_col = if *has_datetime {
+                        "i._datetime DESC NULLS LAST"
+                    } else {
+                        "i._id"
+                    };
+                    let dt = if *has_datetime { datetime_clause.as_str() } else { "" };
+                    format!(
+                        r#"(SELECT
                 i._id,
                 '{collection}' as collection_name,
                 ST_AsGeoJSON(i.geometry)::jsonb as geometry,
@@ -167,14 +257,13 @@ impl StacService {
                 {datetime_col} as _datetime,
                 (to_jsonb(i.*) {system_exclusions}) as properties
             FROM {table} i
-            WHERE {where_clause}
-            ORDER BY {order_col}
-            LIMIT {limit} OFFSET 0
-            "#,
-                    limit = params.limit
-                )
-            })
-            .join(" UNION ALL ");
+            WHERE {where_clause}{dt}
+            ORDER BY {order_col})"#
+                    )
+                })
+                .join(" UNION ALL "),
+            params.limit
+        );
 
         let rows: Vec<(
             Uuid,
@@ -213,7 +302,7 @@ impl StacService {
                 } else {
                     HashMap::new()
                 };
-                AppResult::<(Uuid, HashMap<Uuid, Assets>)>::Ok((collection.id, assets))
+                AppResult::<(String, HashMap<Uuid, Assets>)>::Ok((collection_name, assets))
             },
         ))
         .await?
@@ -225,7 +314,7 @@ impl StacService {
             .map(
                 |(id, collection, geometry, minx, miny, maxx, maxy, datetime, properties)| {
                     let item_assets = assets_map
-                        .get(&id)
+                        .get(&collection)
                         .and_then(|m| m.get(&id).cloned())
                         .unwrap_or_default();
 

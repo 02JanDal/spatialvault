@@ -5,9 +5,13 @@ use aide::{
 use axum::{
     Json,
     extract::{Extension, Query, State},
+    response::{IntoResponse, Response},
 };
+use axum_extra::TypedHeader;
+use axum_extra::headers::ContentType;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::api::common::{Assets, GeoJsonGeometry, Link, media_type, rel};
@@ -105,7 +109,7 @@ pub async fn search_get(
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<StacService>>,
     Query(params): Query<StacSearchParams>,
-) -> AppResult<Json<StacItemCollection>> {
+) -> AppResult<Response> {
     let results = service.search(&user.username, &params).await?;
 
     let base_url = &config.base_url;
@@ -125,7 +129,11 @@ pub async fn search_get(
         }),
     };
 
-    Ok(Json(response))
+    Ok((
+        TypedHeader(ContentType::from_str(media_type::GEOJSON).unwrap()),
+        Json(response),
+    )
+        .into_response())
 }
 
 fn search_get_docs(op: TransformOperation) -> TransformOperation {
@@ -143,7 +151,7 @@ pub async fn search_post(
     Extension(user): Extension<AuthenticatedUser>,
     State(service): State<Arc<StacService>>,
     Json(body): Json<StacSearchBody>,
-) -> AppResult<Json<StacItemCollection>> {
+) -> AppResult<Response> {
     let results = service.search(&user.username, &body.params).await?;
 
     let base_url = &config.base_url;
@@ -163,7 +171,11 @@ pub async fn search_post(
         }),
     };
 
-    Ok(Json(response))
+    Ok((
+        TypedHeader(ContentType::from_str(media_type::GEOJSON).unwrap()),
+        Json(response),
+    )
+        .into_response())
 }
 
 fn search_post_docs(op: TransformOperation) -> TransformOperation {

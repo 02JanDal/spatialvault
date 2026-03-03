@@ -18,6 +18,7 @@ pub struct Collection {
     pub version: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub last_import_job: Option<String>,
 }
 
 /// Collection with storage CRS included (used when fetching with metadata)
@@ -35,6 +36,7 @@ pub struct CollectionWithCrs {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub storage_crs: i32,
+    pub last_import_job: Option<String>,
 }
 
 impl CollectionWithCrs {
@@ -51,6 +53,7 @@ impl CollectionWithCrs {
             version: self.version,
             created_at: self.created_at,
             updated_at: self.updated_at,
+            last_import_job: self.last_import_job.clone(),
         }
     }
 }

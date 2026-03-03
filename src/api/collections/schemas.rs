@@ -46,14 +46,15 @@ fn default_true() -> bool {
 pub struct CollectionResponse {
     #[serde(rename = "type")]
     pub collection_type: String,
+    #[serde(rename = "stac_version")]
     pub stac_version: String,
+    #[serde(rename = "stac_extensions")]
     pub stac_extensions: Vec<String>,
     pub id: String,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub license: Option<String>,
+    pub license: String,
     pub links: Vec<Link>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extent: Option<Extent>,
@@ -63,6 +64,8 @@ pub struct CollectionResponse {
     pub crs: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub storage_crs: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summaries: Option<serde_json::Value>,
 }
 
 /// List of collections

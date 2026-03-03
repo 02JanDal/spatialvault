@@ -8,12 +8,13 @@ use crate::config::Config;
 use aide::{
     axum::{ApiRouter, routing::get_with},
     openapi::{
+
         Components, Contact, ExternalDocumentation, Info, License, OpenApi, ReferenceOr, Server,
         Tag,
     },
     transform::TransformOperation,
 };
-use axum::{Extension, Json};
+use axum::{Extension, http::header, response::{IntoResponse, Response}};
 use indexmap::IndexMap;
 use schemars::schema_for;
 use std::sync::Arc;
@@ -208,8 +209,14 @@ fn schemars_to_openapi_schema<T: schemars::JsonSchema>() -> aide::openapi::Schem
 }
 
 /// Handler to serve the OpenAPI specification
-pub async fn openapi_handler(Extension(api): Extension<Arc<OpenApi>>) -> Json<OpenApi> {
-    Json((*api).clone())
+pub async fn openapi_handler(Extension(api): Extension<Arc<OpenApi>>) -> Response {
+    use crate::api::common::media_type;
+    let body = serde_json::to_string(&*api).unwrap();
+    (
+        [(header::CONTENT_TYPE, media_type::OPENAPI_JSON)],
+        body,
+    )
+        .into_response()
 }
 
 fn openapi_handler_docs(op: TransformOperation) -> TransformOperation {
@@ -218,9 +225,18 @@ fn openapi_handler_docs(op: TransformOperation) -> TransformOperation {
         .tag("Core")
 }
 
-/// Create the docs route that serves the OpenAPI spec
+/// Create the docs routes that serve the OpenAPI spec and Scalar HTML docs
 pub fn docs_routes() -> ApiRouter {
-    ApiRouter::new().api_route("/api", get_with(openapi_handler, openapi_handler_docs))
+    use aide::scalar::Scalar;
+
+    ApiRouter::new()
+        .api_route("/api", get_with(openapi_handler, openapi_handler_docs))
+        .route(
+            "/docs",
+            Scalar::new("/api")
+                .with_title("SpatialVault API")
+                .axum_route(),
+        )
 }
 
 #[cfg(test)]
@@ -236,10 +252,11 @@ mod tests {
                 url: "postgres://localhost/test".to_string(),
                 max_connections: 5,
             },
-            oidc: crate::config::OidcConfig {
-                issuer_url: "http://localhost".to_string(),
-                audience: "test".to_string(),
+            auth: crate::config::AuthConfig {
+                disabled: true,
+                dev_auth: false,
             },
+            oidc: None,
             s3: crate::config::S3Config::default(),
             base_url: "http://localhost:8080".to_string(),
         }

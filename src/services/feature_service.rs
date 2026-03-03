@@ -160,7 +160,7 @@ impl FeatureService {
         let datetime_column = if has_datetime {
             "t._datetime"
         } else {
-            "NULL AS datetime"
+            "t._created_at AS _datetime"
         };
 
         // Data query - reconstruct properties from real columns
@@ -219,14 +219,14 @@ impl FeatureService {
             .map(
                 |(id, minx, miny, maxx, maxy, geometry, datetime, properties, _version)| {
                     let item_assets = if has_assets {
-                        Some(assets_map.get(&id).cloned().unwrap_or_default())
+                        assets_map.get(&id).cloned().unwrap_or_default()
                     } else {
-                        None
+                        Default::default()
                     };
 
                     let mut properties = properties.clone();
-                    if let Some(dt) = datetime {
-                        if let serde_json::Value::Object(ref mut map) = properties {
+                    if let serde_json::Value::Object(ref mut map) = properties {
+                        if let Some(dt) = datetime {
                             map.insert("datetime".to_string(), serde_json::json!(dt.to_rfc3339()));
                         }
                     }
@@ -240,12 +240,8 @@ impl FeatureService {
                         bbox: Some(vec![minx, miny, maxx, maxy]),
                         assets: item_assets,
                         collection: Some(collection_id.to_string()),
-                        stac_version: if has_assets {
-                            Some("1.0.0".to_string())
-                        } else {
-                            None
-                        },
-                        stac_extensions: if has_assets { Some(vec![]) } else { None },
+                        stac_version: Some("1.0.0".to_string()),
+                        stac_extensions: Some(vec![]),
                     }
                 },
             )
@@ -358,7 +354,7 @@ impl FeatureService {
         let datetime_column = if has_datetime {
             "t._datetime"
         } else {
-            "NULL AS datetime"
+            "t._created_at AS _datetime"
         };
 
         let system_exclusions = SYSTEM_COLUMNS
@@ -444,9 +440,9 @@ impl FeatureService {
                     ),
                 );
             }
-            Some(assets_map)
+            assets_map
         } else {
-            None
+            Default::default()
         };
 
         let mut props = properties.unwrap_or(serde_json::json!({}));
@@ -466,12 +462,8 @@ impl FeatureService {
                 bbox: Some(vec![minx, miny, maxx, maxy]),
                 assets,
                 collection: Some(collection_id.to_string()),
-                stac_version: if has_assets {
-                    Some("1.0.0".to_string())
-                } else {
-                    None
-                },
-                stac_extensions: if has_assets { Some(vec![]) } else { None },
+                stac_version: Some("1.0.0".to_string()),
+                stac_extensions: Some(vec![]),
             },
             version,
         )))
@@ -497,7 +489,7 @@ impl FeatureService {
         let datetime_column = if has_datetime {
             "t._datetime"
         } else {
-            "NULL AS datetime"
+            "t._created_at AS _datetime"
         };
 
         let system_exclusions = SYSTEM_COLUMNS
@@ -548,9 +540,9 @@ impl FeatureService {
 
         // Get assets
         let assets = if has_assets {
-            Some(self.get_item_assets(&collection, &id).await?)
+            self.get_item_assets(&collection, &id).await?
         } else {
-            None
+            Default::default()
         };
 
         let mut props = properties.unwrap_or(serde_json::json!({}));
@@ -570,12 +562,8 @@ impl FeatureService {
                 bbox: Some(vec![minx, miny, maxx, maxy]),
                 assets,
                 collection: Some(collection.id.to_string()),
-                stac_version: if has_assets {
-                    Some("1.0.0".to_string())
-                } else {
-                    None
-                },
-                stac_extensions: if has_assets { Some(vec![]) } else { None },
+                stac_version: Some("1.0.0".to_string()),
+                stac_extensions: Some(vec![]),
             },
             version,
             target_crs.unwrap_or(storage_srid),

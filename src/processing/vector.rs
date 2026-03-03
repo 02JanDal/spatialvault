@@ -63,10 +63,14 @@ impl VectorImporter {
     }
 
     /// Read features in batches
-    pub fn read_features_batch(&mut self, batch_size: usize) -> AppResult<Vec<VectorFeature>> {
+    pub fn read_features_batch(
+        &mut self,
+        offset: usize,
+        batch_size: usize,
+    ) -> AppResult<Vec<VectorFeature>> {
         let mut features = Vec::with_capacity(batch_size);
 
-        for feature in self.layer.features().take(batch_size) {
+        for feature in self.layer.features().skip(offset).take(batch_size) {
             // Extract geometry as WKT
             let geometry = feature.geometry().ok_or_else(|| {
                 Processing {

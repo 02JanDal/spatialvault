@@ -32,6 +32,16 @@ use uuid::Uuid;
 
 type FeatureState = (Arc<S3Storage>, Arc<FeatureService>);
 
+/// Parse a feature ID string as UUID, returning 404 if invalid.
+fn parse_feature_id(id: &str) -> Result<Uuid, AppError> {
+    id.parse::<Uuid>().map_err(|_| {
+        NotFound {
+            message: format!("Feature {} not found", id),
+        }
+        .build()
+    })
+}
+
 /// GeoJSON Feature (also serves as STAC Item for raster/pointcloud collections)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Feature {
@@ -45,8 +55,8 @@ pub struct Feature {
     /// STAC fields
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bbox: Option<Vec<f64>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assets: Option<Assets>,
+    #[serde(default)]
+    pub assets: Assets,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collection: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -115,7 +125,7 @@ pub async fn list_features(
     let target_crs = parse_crs_param(params.crs.as_deref())?;
     let bbox_crs = parse_crs_param(params.bbox_crs.as_deref())?;
 
-    let (features, total_count, storage_srid) = service
+    let (mut features, total_count, storage_srid) = service
         .list_features(
             &user.username,
             &collection_id,
@@ -145,6 +155,7 @@ pub async fn list_features(
             rel::COLLECTION,
         )
         .with_type(media_type::JSON),
+        Link::new(base_url, rel::ROOT).with_type(media_type::JSON),
     ];
 
     // Add next/prev links if needed
@@ -176,6 +187,23 @@ pub async fn list_features(
             )
             .with_type(media_type::GEOJSON),
         );
+    }
+
+    // Add links to each feature
+    for feature in &mut features {
+        feature.links = Some(vec![
+            Link::new(
+                format!("{}/collections/{}/items/{}", base_url, collection_id, feature.id),
+                rel::SELF,
+            )
+            .with_type(media_type::GEOJSON),
+            Link::new(
+                format!("{}/collections/{}", base_url, collection_id),
+                rel::COLLECTION,
+            )
+            .with_type(media_type::JSON),
+            Link::new(base_url, rel::ROOT).with_type(media_type::JSON),
+        ]);
     }
 
     let collection = FeatureCollection {
@@ -211,7 +239,7 @@ pub struct FeaturePath {
     /// The collection identifier
     pub collection_id: String,
     /// The feature UUID
-    pub feature_id: Uuid,
+    pub feature_id: String,
 }
 
 pub async fn get_feature(
@@ -222,7 +250,7 @@ pub async fn get_feature(
     Query(params): Query<FeatureQueryParams>,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    let feature_id = path.feature_id;
+    let feature_id = parse_feature_id(&path.feature_id)?;
     let target_crs = parse_crs_param(params.crs.as_deref())?;
 
     let (feature, version, storage_srid) = service
@@ -253,6 +281,12 @@ pub async fn get_feature(
             rel::COLLECTION,
         )
         .with_type(media_type::JSON),
+        Link::new(
+            format!("{}/collections/{}/items", base_url, collection_id),
+            rel::PARENT,
+        )
+        .with_type(media_type::GEOJSON),
+        Link::new(base_url, rel::ROOT).with_type(media_type::JSON),
     ]);
 
     Ok((
@@ -343,7 +377,7 @@ pub async fn update_feature(
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
 
-    let feature_id = path.feature_id;
+    let feature_id = parse_feature_id(&path.feature_id)?;
 
     let (mut request, files) = match payload {
         UpdateFeaturePayload::Json(r) => (r, HashMap::new()),
@@ -396,7 +430,7 @@ pub async fn replace_feature(
     payload: CreateFeaturePayload,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    let feature_id = path.feature_id;
+    let feature_id = parse_feature_id(&path.feature_id)?;
 
     let (mut request, files) = match payload {
         CreateFeaturePayload::Json(r) => (r, HashMap::new()),
@@ -447,7 +481,7 @@ pub async fn delete_feature(
     headers: axum::http::HeaderMap,
 ) -> Result<Response, AppError> {
     let collection_id = path.collection_id;
-    let feature_id = path.feature_id;
+    let feature_id = parse_feature_id(&path.feature_id)?;
 
     service
         .delete_feature(

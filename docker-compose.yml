@@ -1,0 +1,68 @@
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: spatialvault
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  cloudserver:
+    image: zenko/cloudserver
+    ports:
+      - "8000:8000"
+    environment:
+      SCALITY_ACCESS_KEY_ID: accessKey1
+      SCALITY_SECRET_ACCESS_KEY: verySecretKey1
+      S3DATA: file
+      ENDPOINT: cloudserver
+    volumes:
+      - s3data:/usr/src/app/localData
+      - s3metadata:/usr/src/app/localMetadata
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/_/healthcheck"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  init-bucket:
+    image: amazon/aws-cli
+    depends_on:
+      cloudserver:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: accessKey1
+      AWS_SECRET_ACCESS_KEY: verySecretKey1
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: >
+      aws --endpoint-url http://cloudserver:8000
+      s3 mb s3://spatialvault
+
+  spatialvault:
+    build: .
+    depends_on:
+      postgis:
+        condition: service_healthy
+      cloudserver:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPATIALVAULT__DATABASE__URL: postgresql://postgres:postgres@postgis:5432/spatialvault
+      SPATIALVAULT__S3__ENDPOINT: http://cloudserver:8000
+      SPATIALVAULT__S3__BUCKET: spatialvault
+      SPATIALVAULT__S3__ACCESS_KEY_ID: accessKey1
+      SPATIALVAULT__S3__SECRET_ACCESS_KEY: verySecretKey1
+      SPATIALVAULT__AUTH__DISABLED: "true"
+      SPATIALVAULT__BASE_URL: http://localhost:8080
+      RUST_LOG: spatialvault=debug
+
+volumes:
+  s3data:
+  s3metadata:

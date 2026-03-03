@@ -68,6 +68,7 @@ itertools = "0.14.0"
 tempfile = "3.15"
 
 [dev-dependencies]
+aws-sdk-s3 = "1"
 reqwest = { version = "0.12", features = ["json"] }
 testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["postgres"] }

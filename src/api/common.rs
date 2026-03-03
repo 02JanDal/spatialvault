@@ -64,6 +64,7 @@ pub mod rel {
     pub const FIRST: &str = "first";
     pub const LAST: &str = "last";
     pub const QUERYABLES: &str = "http://www.opengis.net/def/rel/ogc/1.0/queryables";
+    pub const MONITOR: &str = "monitor";
 }
 
 /// Standard media types

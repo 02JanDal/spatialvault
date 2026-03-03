@@ -127,6 +127,10 @@ pub fn conforms_to() -> Vec<String> {
         classes::FEATURES_FILTER.to_string(),
         // OGC API Features Part 3 - Queryables
         classes::FEATURES_QUERYABLES.to_string(),
+        "http://02jandal.github.io/spatialvault/spec/0.1/conf/collection-vector-upload".to_string(),
+        "http://02jandal.github.io/spatialvault/spec/0.1/conf/item-attachment".to_string(),
+        "http://02jandal.github.io/spatialvault/spec/0.1/conf/ownership-model-spatialvault"
+            .to_string(),
     ]
 }
 

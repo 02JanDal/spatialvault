@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use super::common::{Link, media_type, rel};
 use super::conformance;
+use crate::auth::AuthenticatedUser;
 use crate::config::Config;
 
 /// OGC API Landing Page / STAC Catalog root
@@ -22,13 +23,20 @@ pub struct LandingPage {
     pub id: String,
     pub title: String,
     pub description: String,
+    #[serde(rename = "stac_version")]
     pub stac_version: String,
+    #[serde(rename = "stac_extensions")]
     pub stac_extensions: Vec<String>,
     pub conforms_to: Vec<String>,
     pub links: Vec<Link>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_user: Option<String>,
 }
 
-async fn get_landing_page(Extension(config): Extension<Arc<Config>>) -> Json<LandingPage> {
+async fn get_landing_page(
+    Extension(config): Extension<Arc<Config>>,
+    user: Option<Extension<AuthenticatedUser>>,
+) -> Json<LandingPage> {
     let base_url = &config.base_url;
 
     let landing = LandingPage {
@@ -39,6 +47,7 @@ async fn get_landing_page(Extension(config): Extension<Arc<Config>>) -> Json<Lan
         stac_version: "1.0.0".to_string(),
         stac_extensions: vec![],
         conforms_to: conformance::conforms_to(),
+        current_user: user.map(|Extension(u)| u.username),
         links: vec![
             Link::new(base_url, rel::SELF)
                 .with_type(media_type::JSON)
@@ -49,6 +58,9 @@ async fn get_landing_page(Extension(config): Extension<Arc<Config>>) -> Json<Lan
             Link::new(format!("{}/api", base_url), rel::SERVICE_DESC)
                 .with_type(media_type::OPENAPI_JSON)
                 .with_title("OpenAPI definition"),
+            Link::new(format!("{}/docs", base_url), rel::SERVICE_DOC)
+                .with_type(media_type::HTML)
+                .with_title("API documentation"),
             Link::new(format!("{}/conformance", base_url), rel::CONFORMANCE)
                 .with_type(media_type::JSON)
                 .with_title("Conformance declaration"),
