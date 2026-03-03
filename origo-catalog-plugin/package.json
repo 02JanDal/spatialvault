@@ -9,14 +9,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.90.21",
     "Origo": "github:origo-map/origo",
-    "solid-js": "^1.9.10"
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.5.2",
     "prettier": "^3.8.1",
     "typescript": "~5.9.3",
-    "vite": "^7.2.4",
-    "vite-plugin-solid": "^2.11.10"
+    "vite": "^7.2.4"
   }
 }

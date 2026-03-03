@@ -59,6 +59,27 @@
     },
     {
       "name": "measure"
+    },
+    {
+      "name": "draw",
+      "options": {
+        "buttonText": "Rita",
+        "drawTools": {
+          "Polygon": ["freehand", "box"],
+          "LineString": ["freehand"]
+        },
+        "showAttributeButton": true,
+        "showDownloadButton": false,
+        "showSaveButton": true,
+        "multipleLayers": true,
+        "exportable": true,
+        "queryable": true,
+        "removable": true,
+        "layerTitle": "Ritlager",
+        "groupTitle": "Ritlåda",
+        "groupName": "rit",
+        "placement": ["screen"]
+      }
     }
   ],
   "pageSettings": {

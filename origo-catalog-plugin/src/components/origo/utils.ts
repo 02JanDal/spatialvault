@@ -1,6 +1,6 @@
-import type { JSX } from "solid-js";
+import type React from "react";
 
-export type StyleProp = JSX.CSSProperties | string | undefined;
+export type StyleProp = React.CSSProperties | undefined;
 
 export type IconType = "sprite" | "svg" | "img" | "image" | "";
 

@@ -1,28 +1,79 @@
-## Usage
+# Origo Catalog Plugin
 
-```bash
-$ npm install # or pnpm install or yarn install
+A catalog browser UI for SpatialVault, built as an [Origo](https://github.com/origo-map/origo) web map plugin using Solid.js and TypeScript. It connects to OGC API / STAC backends and lets users browse, search, and add collections to the map.
+
+## Architecture
+
+```
+Catalog (main component)
+├── Sidebar
+│   ├── "Search" button
+│   ├── "Upload" button
+│   └── Folder tree (derived from collection ID prefixes, e.g. "area:sub:layer")
+└── Content area
+    ├── SearchView    — search across all collections (debounced)
+    ├── UploadView    — file upload skeleton (follow-up)
+    └── FolderView    — collections in a selected folder
 ```
 
-### Learn more on the [Solid Website](https://solidjs.com) and come chat with us on our [Discord](https://discord.com/invite/solidjs)
+Collections are fetched via `GET {url}/collections` (with pagination). Each collection's `id` is split on `:` to derive a folder hierarchy. Collections are displayed as cards with title, description, and an "Add to map" button.
 
-## Available Scripts
+### Adding layers to the map
 
-In the project directory, you can run:
+When "Add to map" is clicked, the plugin inspects the collection's links:
 
-### `npm run dev`
+1. **Tiles link** (`rel=tiles`) → MVT vector tile layer or XYZ raster tile layer (based on content type)
+2. **Items link** (`rel=items`) → OGC API Features layer with GeoJSON format and bbox loading
 
-Runs the app in the development mode.<br>
-Open [http://localhost:5173](http://localhost:5173) to view it in the browser.
+## Configuration
 
-### `npm run build`
+The plugin accepts an array of catalog sources:
 
-Builds the app for production to the `dist` folder.<br>
-It correctly bundles Solid in production mode and optimizes the build for the best performance.
+```typescript
+CatalogPlugin({
+  catalogs: [
+    {
+      url: "https://my-spatialvault.example.com",
+      type: "ogc-stac",
+      name: "My Catalog",
+    },
+  ],
+});
+```
 
-The build is minified and the filenames include the hashes.<br>
-Your app is ready to be deployed!
+## Development
 
-## Deployment
+```bash
+npm install
+npm run dev
+```
 
-Learn more about deploying your application with the [documentations](https://vite.dev/guide/static-deploy.html)
+This starts a Vite dev server with a local Origo instance. By default it points at `http://localhost:8484` as the catalog source — adjust in `src/index.tsx` or run a local SpatialVault instance.
+
+## Build
+
+```bash
+npm run build
+```
+
+Outputs to `dist/`.
+
+## Project structure
+
+```
+src/
+├── index.tsx                  # Plugin entry point + Origo integration
+├── index.css                  # All styles
+├── Catalog.tsx                # Main component, sidebar, data loading
+├── components/
+│   ├── CollectionCard.tsx     # Collection card with "Add to map"
+│   ├── FolderView.tsx         # Folder contents + breadcrumb
+│   ├── SearchView.tsx         # Search input + results
+│   ├── UploadView.tsx         # Upload skeleton (drag-and-drop)
+│   └── origo/                 # Solid.js wrappers for Origo UI components
+└── lib/
+    ├── catalog-client.ts      # Shared types (Collection, CatalogSource, etc.)
+    ├── ogc-stac-client.ts     # API functions (fetchCollections, fetchCapabilities)
+    ├── collections.ts         # Pure utilities (folder tree, filtering, search)
+    └── add-layer.ts           # OpenLayers layer creation helpers
+```

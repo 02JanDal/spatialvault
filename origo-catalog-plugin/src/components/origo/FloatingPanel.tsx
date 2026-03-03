@@ -1,5 +1,5 @@
-import type { JSX } from "solid-js";
-import { createEffect, onCleanup, onMount } from "solid-js";
+import type React from "react";
+import { useEffect, useRef } from "react";
 import Button from "./Button";
 import { joinClasses, makeElementDraggable, type StyleProp } from "./utils";
 
@@ -14,62 +14,61 @@ export interface OrigoFloatingPanelProps {
   onClose?: () => void;
   onHide?: () => void;
   onShow?: () => void;
-  children?: JSX.Element;
+  children?: React.ReactNode;
 }
 
 export const FloatingPanel = (props: OrigoFloatingPanelProps) => {
-  let panelRef: HTMLDivElement | undefined;
-  let cleanupDrag: (() => void) | undefined;
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  const panelClass = () => {
+  const panelClass = (() => {
     const base =
       "absolute flex column control bg-white overflow-hidden z-index-top no-select";
     const faded = props.isActive === false ? "faded" : "";
     const left = props.type === "left" ? "top-left no-margin height-full" : "";
     return joinClasses(base, faded, left, props.cls);
-  };
+  })();
 
-  const panelStyle = () => {
+  const panelStyle = (() => {
     if (props.type === "left") return props.style;
     return (
       props.style ?? "top: 4rem; left: 4rem; max-height: calc(100% - (6rem))"
     );
-  };
+  })();
 
-  const headerClass = () =>
-    joinClasses(
-      "flex row justify-end grey-lightest",
-      props.type === "left" ? "" : "draggable move",
-    );
+  const headerClass = joinClasses(
+    "flex row justify-end grey-lightest",
+    props.type === "left" ? "" : "draggable move",
+  );
 
-  createEffect(() => {
-    if (!panelRef) return;
+  useEffect(() => {
+    const panelEl = panelRef.current;
+    if (!panelEl) return;
     if (props.isActive === false) {
-      panelRef.classList.add("faded");
+      panelEl.classList.add("faded");
       props.onHide?.();
     } else {
-      panelRef.classList.remove("faded");
+      panelEl.classList.remove("faded");
       props.onShow?.();
     }
-  });
+  }, [props.isActive]);
 
-  onMount(() => {
-    if (panelRef && props.type !== "left") {
-      cleanupDrag = makeElementDraggable(panelRef);
+  useEffect(() => {
+    const panelEl = panelRef.current;
+    if (panelEl && props.type !== "left") {
+      const cleanup = makeElementDraggable(panelEl);
+      return cleanup;
     }
-  });
-
-  onCleanup(() => cleanupDrag?.());
+  }, [props.type]);
 
   return (
     <div
       ref={panelRef}
-      class={panelClass()}
-      style={panelStyle() as JSX.CSSProperties}
+      className={panelClass}
+      style={panelStyle as React.CSSProperties}
     >
-      <div class={headerClass()} style={{ width: "100%" }}>
+      <div className={headerClass} style={{ width: "100%" }}>
         <div
-          class="flex row justify-start margin-top-small margin-left text-weight-bold padding-right"
+          className="flex row justify-start margin-top-small margin-left text-weight-bold padding-right"
           style={{ width: "100%" }}
         >
           {props.title ?? "Inforuta"}
@@ -81,7 +80,7 @@ export const FloatingPanel = (props: OrigoFloatingPanelProps) => {
           onClick={() => props.onClose?.()}
         />
       </div>
-      <div class="padding-y-small overflow-auto text-small">
+      <div className="padding-y-small overflow-auto text-small">
         {props.children}
       </div>
     </div>

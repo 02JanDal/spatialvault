@@ -1,5 +1,4 @@
-import type { JSX } from "solid-js";
-import { Show } from "solid-js";
+import type React from "react";
 import Button from "./Button";
 import { joinClasses, type StyleProp } from "./utils";
 
@@ -15,36 +14,36 @@ export interface OrigoModalProps {
   onShow?: () => void;
   onHide?: () => void;
   visible?: boolean;
-  children?: JSX.Element;
+  children?: React.ReactNode;
 }
 
 export const Modal = (props: OrigoModalProps) => {
-  const isVisible = () => props.visible ?? true;
+  const isVisible = props.visible ?? true;
 
   return (
-    <div class={joinClasses(props.cls, "flex", isVisible() ? "" : "o-hidden")}>
+    <div className={joinClasses(props.cls, "flex", isVisible ? "" : "o-hidden")}>
       <div
-        class="o-modal-screen"
+        className="o-modal-screen"
         onClick={() => !props.isStatic && props.onClose?.()}
       />
       <div
-        class={joinClasses("o-modal", props.contentCls)}
-        style={props.style as JSX.CSSProperties}
+        className={joinClasses("o-modal", props.contentCls)}
+        style={props.style as React.CSSProperties}
       >
-        <div class="flex row justify-end grey-lightest draggable">
+        <div className="flex row justify-end grey-lightest draggable">
           <div
-            class="flex row justify-start margin-y-smaller margin-left text-weight-bold"
+            className="flex row justify-start margin-y-smaller margin-left text-weight-bold"
             style={{ width: "100%" }}
           >
             {props.title ?? ""}
           </div>
-          <Show when={props.newTabUrl}>
+          {props.newTabUrl && (
             <Button
               cls="small round margin-top-smaller margin-bottom-auto margin-right icon-smaller grey-lightest no-shrink"
               icon="#ic_launch_24px"
               onClick={() => window.open(props.newTabUrl)}
             />
-          </Show>
+          )}
           <Button
             cls="small round margin-top-smaller margin-bottom-auto margin-right icon-smaller grey-lightest no-shrink"
             icon={props.closeIcon ?? "#ic_close_24px"}
@@ -53,7 +52,7 @@ export const Modal = (props: OrigoModalProps) => {
             onClick={() => props.onClose?.()}
           />
         </div>
-        <div class="o-modal-content">{props.children}</div>
+        <div className="o-modal-content">{props.children}</div>
       </div>
     </div>
   );

@@ -1,12 +1,5 @@
-import type { JSX } from "solid-js";
-import {
-  createEffect,
-  createSignal,
-  onCleanup,
-  onMount,
-  splitProps,
-} from "solid-js";
-import { Dynamic } from "solid-js/web";
+import type React from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { joinClasses, type StyleProp } from "./utils";
 
 export interface OrigoCollapseProps {
@@ -21,78 +14,68 @@ export interface OrigoCollapseProps {
   contentStyle?: StyleProp;
   containerCls?: string;
   style?: StyleProp;
-  tagName?: keyof JSX.IntrinsicElements;
+  tagName?: keyof React.JSX.IntrinsicElements;
   mainCls?: string;
-  header?: JSX.Element;
-  footer?: JSX.Element;
-  children: JSX.Element;
+  header?: React.ReactNode;
+  footer?: React.ReactNode;
+  children: React.ReactNode;
   onToggle?: (expanded: boolean) => void;
 }
 
 export const Collapse = (props: OrigoCollapseProps) => {
-  const [local, rest] = splitProps(props, [
-    "expanded",
-    "defaultExpanded",
-    "toggleOnClick",
-    "bubble",
-    "collapseX",
-    "collapseY",
-    "contentCls",
-    "contentStyle",
-    "containerCls",
-    "style",
-    "tagName",
-    "mainCls",
-    "cls",
-    "header",
-    "footer",
-    "children",
-    "onToggle",
-  ]);
+  const doCollapseX = props.collapseX ?? true;
+  const doCollapseY = props.collapseY ?? true;
 
-  const collapseX = () => local.collapseX ?? true;
-  const collapseY = () => local.collapseY ?? true;
-  const [expanded, setExpanded] = createSignal(
-    local.expanded ?? local.defaultExpanded ?? false,
+  const [expanded, setExpanded] = useState(
+    props.expanded ?? props.defaultExpanded ?? false,
   );
 
-  let collapseEl: HTMLElement | undefined;
-  let containerEl: HTMLDivElement | undefined;
+  const collapseRef = useRef<HTMLElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
-  createEffect(() => {
-    if (local.expanded !== undefined) setExpanded(local.expanded);
-  });
+  useEffect(() => {
+    if (props.expanded !== undefined) setExpanded(props.expanded);
+  }, [props.expanded]);
 
-  const setTabIndex = (idx: number) => {
-    if (!containerEl) return;
-    const buttons = containerEl.getElementsByTagName("button");
-    for (let i = 0; i < buttons.length; i += 1) {
-      const btn = buttons[i];
-      if (btn.closest(".collapse-container") === containerEl) {
-        btn.tabIndex = idx;
+  const setTabIndex = useCallback(
+    (idx: number) => {
+      const containerEl = containerRef.current;
+      if (!containerEl) return;
+      const buttons = containerEl.getElementsByTagName("button");
+      for (let i = 0; i < buttons.length; i += 1) {
+        const btn = buttons[i];
+        if (btn.closest(".collapse-container") === containerEl) {
+          btn.tabIndex = idx;
+        }
       }
-    }
-  };
+    },
+    [],
+  );
 
-  const onTransitionEnd = () => {
+  const onTransitionEnd = useCallback(() => {
+    const containerEl = containerRef.current;
     if (!containerEl) return;
     containerEl.removeEventListener("transitionend", onTransitionEnd);
-    if (collapseY()) containerEl.style.height = "";
-    if (collapseX()) containerEl.style.width = "";
-  };
+    if (doCollapseY) containerEl.style.height = "";
+    if (doCollapseX) containerEl.style.width = "";
+  }, [doCollapseX, doCollapseY]);
 
-  const expand = () => {
+  const expand = useCallback(() => {
+    const collapseEl = collapseRef.current;
+    const containerEl = containerRef.current;
     if (!collapseEl || !containerEl) return;
     collapseEl.classList.add("expanded");
     const newHeight = containerEl.scrollHeight;
     const newWidth = containerEl.scrollWidth;
-    if (collapseY()) containerEl.style.height = `${newHeight}px`;
-    if (collapseX()) containerEl.style.width = `${newWidth}px`;
+    if (doCollapseY) containerEl.style.height = `${newHeight}px`;
+    if (doCollapseX) containerEl.style.width = `${newWidth}px`;
     containerEl.addEventListener("transitionend", onTransitionEnd);
     setTabIndex(0);
-  };
+  }, [doCollapseX, doCollapseY, onTransitionEnd, setTabIndex]);
 
-  const collapse = () => {
+  const collapse = useCallback(() => {
+    const collapseEl = collapseRef.current;
+    const containerEl = containerRef.current;
     if (!collapseEl || !containerEl) return;
     collapseEl.classList.remove("expanded");
     const currentHeight = containerEl.scrollHeight;
@@ -101,83 +84,87 @@ export const Collapse = (props: OrigoCollapseProps) => {
     containerEl.style.transition = "";
     setTabIndex(-1);
     requestAnimationFrame(() => {
-      const el = containerEl;
-      if (!el) return;
-      if (collapseY()) el.style.height = `${currentHeight}px`;
-      if (collapseX()) el.style.width = `${currentWidth}px`;
-      el.style.transition = elementTransition;
+      if (!containerEl) return;
+      if (doCollapseY) containerEl.style.height = `${currentHeight}px`;
+      if (doCollapseX) containerEl.style.width = `${currentWidth}px`;
+      containerEl.style.transition = elementTransition;
 
       requestAnimationFrame(() => {
-        if (!el) return;
-        if (collapseY()) el.style.height = "0px";
-        if (collapseX()) el.style.width = "0px";
+        if (!containerEl) return;
+        if (doCollapseY) containerEl.style.height = "0px";
+        if (doCollapseX) containerEl.style.width = "0px";
       });
     });
-  };
+  }, [doCollapseX, doCollapseY, setTabIndex]);
 
-  const toggle = (evt?: Event) => {
+  const toggle = (evt?: React.MouseEvent) => {
     evt?.preventDefault();
-    if (!local.bubble) evt?.stopPropagation();
-    const next = !expanded();
+    if (!props.bubble) evt?.stopPropagation();
+    const next = !expanded;
     setExpanded(next);
-    local.onToggle?.(next);
+    props.onToggle?.(next);
   };
 
-  createEffect(() => {
+  // Expand/collapse effect
+  useEffect(() => {
+    const containerEl = containerRef.current;
     if (!containerEl) return;
-    if (expanded()) {
+    if (expanded) {
       expand();
     } else {
       collapse();
     }
-  });
+  }, [expanded, expand, collapse]);
 
-  onMount(() => {
+  // Initial mount setup
+  useEffect(() => {
+    const containerEl = containerRef.current;
     if (!containerEl) return;
-    if (expanded()) {
+    if (expanded) {
       setTabIndex(0);
     } else {
       setTabIndex(-1);
-      if (collapseY()) containerEl.style.height = "0px";
-      if (collapseX()) containerEl.style.width = "0px";
+      if (doCollapseY) containerEl.style.height = "0px";
+      if (doCollapseX) containerEl.style.width = "0px";
     }
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  onCleanup(() => {
-    if (containerEl)
-      containerEl.removeEventListener("transitionend", onTransitionEnd);
-  });
+  // Cleanup
+  useEffect(() => {
+    const containerEl = containerRef.current;
+    return () => {
+      if (containerEl)
+        containerEl.removeEventListener("transitionend", onTransitionEnd);
+    };
+  }, [onTransitionEnd]);
+
+  const Tag = (props.tagName ?? "div") as "div";
 
   return (
-    <Dynamic
-      component={local.tagName ?? "div"}
-      ref={(el: HTMLElement) => {
-        collapseEl = el;
-      }}
-      class={joinClasses(
-        local.mainCls ?? "collapse",
-        local.cls,
-        expanded() ? "expanded" : "",
+    <Tag
+      ref={(el) => { collapseRef.current = el; }}
+      className={joinClasses(
+        props.mainCls ?? "collapse",
+        props.cls,
+        expanded ? "expanded" : "",
       )}
-      style={local.style as JSX.CSSProperties}
-      onClick={local.toggleOnClick ? toggle : undefined}
-      {...rest}
+      style={props.style as React.CSSProperties}
+      onClick={props.toggleOnClick ? toggle : undefined}
     >
-      {local.header}
+      {props.header}
       <div
-        ref={(el: HTMLDivElement) => {
-          containerEl = el;
-        }}
-        class={joinClasses(
-          local.containerCls ?? "collapse-container",
-          local.contentCls,
+        ref={(el) => { containerRef.current = el; }}
+        className={joinClasses(
+          props.containerCls ?? "collapse-container",
+          props.contentCls,
         )}
-        style={local.contentStyle as JSX.CSSProperties}
+        style={props.contentStyle as React.CSSProperties}
       >
-        {local.children}
+        {props.children}
       </div>
-      {local.footer}
-    </Dynamic>
+      {props.footer}
+    </Tag>
   );
 };
 

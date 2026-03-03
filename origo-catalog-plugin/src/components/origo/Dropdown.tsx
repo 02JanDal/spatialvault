@@ -1,5 +1,5 @@
-import type { JSX } from "solid-js";
-import { createEffect, createMemo, createSignal, For } from "solid-js";
+import type React from "react";
+import { useEffect, useMemo, useState } from "react";
 import Button from "./Button";
 import Collapse from "./Collapse";
 import { joinClasses, type StyleProp } from "./utils";
@@ -10,10 +10,11 @@ export interface DropdownItem {
 }
 
 export interface OrigoDropdownProps {
+  id?: string;
   cls?: string;
   containerCls?: string;
   contentCls?: string;
-  contentStyle?: string;
+  contentStyle?: React.CSSProperties;
   buttonCls?: string;
   buttonIconCls?: string;
   buttonContainerCls?: string;
@@ -28,20 +29,22 @@ export interface OrigoDropdownProps {
 }
 
 export const Dropdown = (props: OrigoDropdownProps) => {
-  const normalizedItems = createMemo(() =>
-    (props.items ?? []).map((item) =>
-      typeof item === "object" && "label" in item && "value" in item
-        ? item
-        : { label: String(item), value: String(item) },
-    ),
+  const normalizedItems = useMemo(
+    () =>
+      (props.items ?? []).map((item) =>
+        typeof item === "object" && "label" in item && "value" in item
+          ? item
+          : { label: String(item), value: String(item) },
+      ),
+    [props.items],
   );
 
-  const [expanded, setExpanded] = createSignal(false);
-  const [text, setText] = createSignal(props.text ?? " ");
+  const [expanded, setExpanded] = useState(false);
+  const [text, setText] = useState(props.text ?? " ");
 
-  createEffect(() => {
+  useEffect(() => {
     if (props.text !== undefined) setText(props.text);
-  });
+  }, [props.text]);
 
   const toggle = () => setExpanded((prev) => !prev);
 
@@ -53,16 +56,17 @@ export const Dropdown = (props: OrigoDropdownProps) => {
     setExpanded(false);
   };
 
-  const position = () =>
-    (props.direction ?? "down") === "down" ? "top" : "bottom";
-  const header = () =>
-    (props.direction ?? "down") === "down" ? (
-      <div class={joinClasses(props.buttonContainerCls, "collapse-header")}>
+  const direction = props.direction ?? "down";
+  const position = direction === "down" ? "top" : "bottom";
+
+  const header =
+    direction === "down" ? (
+      <div className={joinClasses(props.buttonContainerCls, "collapse-header")}>
         <Button
-          text={text()}
+          text={text}
           cls={props.buttonCls ?? "padding-small rounded light box-shadow"}
           style={{ padding: "0 .5rem", overflow: "hidden" }}
-          icon={`#ic_arrow_drop_${props.direction ?? "down"}_24px`}
+          icon={`#ic_arrow_drop_${direction}_24px`}
           iconCls={joinClasses(props.buttonIconCls, "icon-smaller flex")}
           ariaLabel={props.ariaLabel ?? ""}
           textCls={props.buttonTextCls ?? "flex"}
@@ -71,14 +75,14 @@ export const Dropdown = (props: OrigoDropdownProps) => {
       </div>
     ) : null;
 
-  const footer = () =>
-    (props.direction ?? "down") === "up" ? (
-      <div class={joinClasses(props.buttonContainerCls, "collapse-header")}>
+  const footer =
+    direction === "up" ? (
+      <div className={joinClasses(props.buttonContainerCls, "collapse-header")}>
         <Button
-          text={text()}
+          text={text}
           cls={props.buttonCls ?? "padding-small rounded light box-shadow"}
           style={{ padding: "0 .5rem", overflow: "hidden" }}
-          icon={`#ic_arrow_drop_${props.direction ?? "up"}_24px`}
+          icon={`#ic_arrow_drop_${direction}_24px`}
           iconCls={joinClasses(props.buttonIconCls, "icon-smaller flex")}
           ariaLabel={props.ariaLabel ?? ""}
           textCls={props.buttonTextCls ?? "flex"}
@@ -89,27 +93,25 @@ export const Dropdown = (props: OrigoDropdownProps) => {
 
   return (
     <div
-      class={joinClasses(props.cls, "relative")}
-      style={props.style as JSX.CSSProperties}
+      className={joinClasses(props.cls, "relative")}
+      style={props.style as React.CSSProperties}
     >
       <Collapse
         cls="dropdown"
         containerCls={props.containerCls ?? "collapse-container"}
         contentCls={props.contentCls ?? "bg-white"}
-        contentStyle={`${position()}:calc(100% + 2px);${props.contentStyle ?? ""}`}
+        contentStyle={{ [position]: "calc(100% + 2px)", ...props.contentStyle }}
         collapseX={false}
-        header={header()}
-        footer={footer()}
-        expanded={expanded()}
+        header={header}
+        footer={footer}
+        expanded={expanded}
       >
         <ul>
-          <For each={normalizedItems()}>
-            {(item) => (
-              <li onClick={() => selectItem(item)}>
-                <span>{item.label}</span>
-              </li>
-            )}
-          </For>
+          {normalizedItems.map((item) => (
+            <li key={item.value} onClick={() => selectItem(item)}>
+              <span>{item.label}</span>
+            </li>
+          ))}
         </ul>
       </Collapse>
     </div>

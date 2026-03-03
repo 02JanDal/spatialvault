@@ -1,13 +1,22 @@
-/* @refresh reload */
-import { render } from "solid-js/web";
+import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Catalog from "./Catalog.tsx";
 import Origo, { type Viewer } from "Origo";
+import type { CatalogSource } from "./lib/catalog-client.ts";
+
+const queryClient = new QueryClient();
 
 import "Origo/build/css/style.css";
 
 import "./index.css";
 
-function CatalogPlugin(_options = {}) {
+interface CatalogPluginOptions {
+  catalogs?: CatalogSource[];
+}
+
+function CatalogPlugin(options: CatalogPluginOptions = {}) {
+  const sources: CatalogSource[] = options.catalogs ?? [];
+
   return Origo.ui.Component({
     name: "catalog",
     onAdd(e) {
@@ -60,16 +69,27 @@ function CatalogPlugin(_options = {}) {
       );
 
       const root = document.getElementById("catalog-root");
-      render(() => <Catalog viewer={viewer} />, root!);
+      createRoot(root!).render(
+        <QueryClientProvider client={queryClient}>
+          <Catalog viewer={viewer} sources={sources} />
+        </QueryClientProvider>,
+      );
     },
   });
 }
 
-console.log("DEADBEEF");
 const origo = Origo("index.json", {
   svgSpritePath: "/node_modules/Origo/build/css/svg/",
 })!;
 origo.on("load", (viewer) => {
-  const catalog = CatalogPlugin({});
+  const catalog = CatalogPlugin({
+    catalogs: [
+      {
+        url: "http://localhost:8080",
+        type: "ogc-stac",
+        name: "Local SpatialVault",
+      },
+    ],
+  });
   viewer.addComponent(catalog);
 });

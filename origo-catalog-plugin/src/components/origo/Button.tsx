@@ -1,5 +1,4 @@
-import type { JSX } from "solid-js";
-import { Show } from "solid-js";
+import type React from "react";
 import Icon from "./Icon";
 import { joinClasses, type StyleProp } from "./utils";
 
@@ -27,12 +26,12 @@ export interface OrigoButtonProps {
   state?: ButtonState;
   validStates?: ButtonState[];
   style?: StyleProp;
-  onClick?: (evt: MouseEvent) => void;
-  onMouseEnter?: (evt: MouseEvent) => void;
+  onClick?: (evt: React.MouseEvent<HTMLButtonElement>) => void;
+  onMouseEnter?: (evt: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 export const Button = (props: OrigoButtonProps) => {
-  const validStates = () =>
+  const validStates =
     props.validStates ?? [
       "initial",
       "active",
@@ -41,21 +40,21 @@ export const Button = (props: OrigoButtonProps) => {
       "loading",
       "tracking",
     ];
-  const stateClass = () =>
+  const stateClass =
     props.state &&
     props.state !== "initial" &&
-    validStates().includes(props.state)
+    validStates.includes(props.state)
       ? props.state
       : "";
-  const ariaLabel = () =>
+  const ariaLabel =
     props.ariaLabel ?? props.tooltipText ?? props.title ?? "";
 
   return (
     <button
-      class={joinClasses(props.cls, "o-tooltip", stateClass())}
-      style={props.style as JSX.CSSProperties}
-      aria-label={ariaLabel()}
-      tabindex={props.tabIndex ?? 0}
+      className={joinClasses(props.cls, "o-tooltip", stateClass)}
+      style={props.style as React.CSSProperties}
+      aria-label={ariaLabel}
+      tabIndex={props.tabIndex ?? 0}
       onClick={(evt) => {
         evt.preventDefault();
         props.onClick?.(evt);
@@ -65,12 +64,12 @@ export const Button = (props: OrigoButtonProps) => {
         props.onMouseEnter?.(evt);
       }}
     >
-      <Show when={props.icon && props.text}>
-        <span class="flex row align-center justify-space-between">
-          <span class={joinClasses(props.textCls, "margin-right-small")}>
+      {props.icon && props.text && (
+        <span className="flex row align-center justify-space-between">
+          <span className={joinClasses(props.textCls, "margin-right-small")}>
             {props.text}
           </span>
-          <span class={joinClasses("icon", props.iconCls)}>
+          <span className={joinClasses("icon", props.iconCls)}>
             <Icon
               icon={props.icon}
               cls={props.iconCls}
@@ -79,9 +78,9 @@ export const Button = (props: OrigoButtonProps) => {
             />
           </span>
         </span>
-      </Show>
-      <Show when={props.icon && !props.text}>
-        <span class={joinClasses("icon", props.iconCls)}>
+      )}
+      {props.icon && !props.text && (
+        <span className={joinClasses("icon", props.iconCls)}>
           <Icon
             icon={props.icon}
             cls={props.iconCls}
@@ -89,16 +88,16 @@ export const Button = (props: OrigoButtonProps) => {
             title={props.title}
           />
         </span>
-      </Show>
-      <Show when={!props.icon}>
-        <span class={props.textCls}>{props.text}</span>
-      </Show>
-      <Show when={props.tooltipText}>
+      )}
+      {!props.icon && (
+        <span className={props.textCls}>{props.text}</span>
+      )}
+      {props.tooltipText && (
         <span
           data-tooltip={props.tooltipText}
           data-placement={props.tooltipPlacement ?? "east"}
         />
-      </Show>
+      )}
     </button>
   );
 };

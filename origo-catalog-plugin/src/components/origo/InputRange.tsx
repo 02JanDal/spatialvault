@@ -1,5 +1,5 @@
-import type { JSX } from "solid-js";
-import { createEffect, createSignal } from "solid-js";
+import type React from "react";
+import { useEffect, useState } from "react";
 import { type StyleProp } from "./utils";
 
 export interface OrigoInputRangeProps {
@@ -16,28 +16,17 @@ export interface OrigoInputRangeProps {
 }
 
 export const InputRange = (props: OrigoInputRangeProps) => {
-  const minValue = () => props.minValue ?? 0;
-  const maxValue = () => props.maxValue ?? 100;
-  const initialValue = () =>
-    props.initialValue ?? (minValue() + maxValue()) / 2;
+  const minValue = props.minValue ?? 0;
+  const maxValue = props.maxValue ?? 100;
+  const initialValue = props.initialValue ?? (minValue + maxValue) / 2;
 
-  const [value, setValue] = createSignal(props.value ?? initialValue());
+  const [value, setValue] = useState(props.value ?? initialValue);
 
-  createEffect(() => {
+  useEffect(() => {
     if (props.value !== undefined) setValue(props.value);
-  });
+  }, [props.value]);
 
-  const handleInput: JSX.EventHandlerUnion<HTMLInputElement, InputEvent> = (
-    evt,
-  ) => {
-    const newValue = Number(evt.currentTarget.value);
-    setValue(newValue);
-    props.onChange?.(newValue);
-  };
-
-  const handleChange: JSX.EventHandlerUnion<HTMLInputElement, Event> = (
-    evt,
-  ) => {
+  const handleChange = (evt: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = Number(evt.currentTarget.value);
     setValue(newValue);
     props.onChange?.(newValue);
@@ -45,23 +34,22 @@ export const InputRange = (props: OrigoInputRangeProps) => {
 
   return (
     <>
-      <div class="flex no-wrap text-smaller align-center">
+      <div className="flex no-wrap text-smaller align-center">
         <input
           type="range"
-          min={minValue()}
-          max={maxValue()}
-          value={value()}
+          min={minValue}
+          max={maxValue}
+          value={value}
           step={props.step ?? 1}
-          class={props.cls}
-          style={props.style as JSX.CSSProperties}
-          tabindex={-99}
-          onInput={handleInput}
+          className={props.cls}
+          style={props.style as React.CSSProperties}
+          tabIndex={-99}
           onChange={handleChange}
         />
-        <output class="padding-left-small text-align-center">{value()}</output>
+        <output className="padding-left-small text-align-center">{value}</output>
         <div>&nbsp;{props.unit ?? ""}</div>
       </div>
-      <div class="text-smaller text-align-center padding-smallpadding-top-smallest width-full">
+      <div className="text-smaller text-align-center padding-smallpadding-top-smallest width-full">
         {props.label ?? ""}
       </div>
     </>

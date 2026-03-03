@@ -1,10 +1,11 @@
-import type { JSX } from "solid-js";
-import { createEffect, createSignal } from "solid-js";
+import type React from "react";
+import { useEffect, useState } from "react";
 import { type StyleProp } from "./utils";
 
 export interface OrigoInputProps {
+  id?: string;
   cls?: string;
-  placeholderText?: string;
+  placeholder?: string;
   value?: string;
   style?: StyleProp;
   onChange?: (value: string) => void;
@@ -12,23 +13,19 @@ export interface OrigoInputProps {
 }
 
 export const Input = (props: OrigoInputProps) => {
-  const [value, setValue] = createSignal(props.value ?? "");
+  const [value, setValue] = useState(props.value ?? "");
 
-  createEffect(() => {
+  useEffect(() => {
     if (props.value !== undefined) setValue(props.value);
-  });
+  }, [props.value]);
 
-  const handleInput: JSX.EventHandlerUnion<HTMLInputElement, InputEvent> = (
-    evt,
-  ) => {
+  const handleChange = (evt: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = evt.currentTarget.value;
     setValue(newValue);
     props.onChange?.(newValue);
   };
 
-  const handleBlur: JSX.EventHandlerUnion<HTMLInputElement, FocusEvent> = (
-    evt,
-  ) => {
+  const handleBlur = (evt: React.FocusEvent<HTMLInputElement>) => {
     const newValue = evt.currentTarget.value;
     setValue(newValue);
     props.onFocusOut?.(newValue);
@@ -36,12 +33,13 @@ export const Input = (props: OrigoInputProps) => {
 
   return (
     <input
+      id={props.id}
       type="text"
-      placeholder={props.placeholderText}
-      class={props.cls}
-      value={value()}
-      style={props.style as JSX.CSSProperties}
-      onInput={handleInput}
+      placeholder={props.placeholder}
+      className={props.cls}
+      value={value}
+      style={props.style as React.CSSProperties}
+      onChange={handleChange}
       onBlur={handleBlur}
     />
   );

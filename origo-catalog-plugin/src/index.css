@@ -1,44 +1,76 @@
 /* on small screens, make modal full screen */
 @media (max-width: 600px) {
-  .catalog-modal .o-modal {
-    width: 100vw !important;
-    height: 100vh !important;
-    max-width: 100vw !important;
-    max-height: 100vh !important;
-    top: 0 !important; /* counteract dragging */
-    left: 0 !important; /* counteract dragging */
-    transform: translateY(0%);
-    border-radius: 0;
-    transition: transform 0.3s ease-in-out;
-  }
-  .catalog-modal .o-modal-screen {
-    display: none;
-  }
-  .catalog-modal.o-hidden {
-    display: initial;
-  }
-  .catalog-modal.o-hidden .o-modal {
-    transform: translateY(100%);
-  }
-}
-@media (min-width: 601px) {
-  .catalog-modal .o-modal {
-    width: 70%;
-    min-width: 500px;
-    height: 70%;
-    min-height: 400px;
-  }
+    .catalog-modal .o-modal {
+        width: 100vw !important;
+        height: 100vh !important;
+        max-width: 100vw !important;
+        max-height: 100vh !important;
+        top: 0 !important; /* counteract dragging */
+        left: 0 !important; /* counteract dragging */
+        transform: translateY(0%);
+        border-radius: 0;
+        transition: transform 0.3s ease-in-out;
+    }
+
+    .catalog-modal .o-modal-screen {
+        display: none;
+    }
+
+    .catalog-modal.o-hidden {
+        display: initial;
+    }
+
+    .catalog-modal.o-hidden .o-modal {
+        transform: translateY(100%);
+    }
 }
 
-.catalog-container {
-  height: 100%;
-  width: 100%;
-  display: flex;
-  flex-direction: row;
-  gap: 0.5rem;
+@media (min-width: 601px) {
+    .catalog-modal .o-modal {
+        width: 70%;
+        min-width: 500px;
+        height: 70%;
+        min-height: 400px;
+    }
 }
+
+.catalog-modal .o-modal-content {
+    height: calc(100% - 32px - 2 * 10px);
+}
+
+#catalog-root {
+    display: flex;
+    flex-direction: row;
+    gap: 1rem;
+    height: 100%;
+}
+
 .catalog-sidebar {
-  width: 25%;
-  min-width: 200px;
-  max-width: 300px;
+    width: 20%;
+    min-width: 200px;
+    max-width: 300px;
+    border-right: 1px solid #ccc;
+    padding-right: 1rem;
 }
+
+.catalog-sidebar .catalog {
+    padding-top: 1rem;
+}
+
+.upload-tabs {
+    margin-bottom: 1rem;
+}
+
+.columns-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.column-row {
+    display: flex;
+    flex-direction: row;
+    gap: 0.5rem;
+    align-items: center;
+}
+

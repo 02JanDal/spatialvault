@@ -1,5 +1,5 @@
-import type { JSX } from "solid-js";
-import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import type React from "react";
+import { useEffect, useRef, useState } from "react";
 import { joinClasses, type StyleProp } from "./utils";
 
 export interface OrigoPopupMenuProps {
@@ -9,38 +9,40 @@ export interface OrigoPopupMenuProps {
   defaultVisible?: boolean;
   onUnfocus?: (evt: MouseEvent) => void;
   onVisibilityChange?: (visible: boolean) => void;
-  children?: JSX.Element;
+  children?: React.ReactNode;
 }
 
 export const PopupMenu = (props: OrigoPopupMenuProps) => {
-  const [visible, setVisible] = createSignal(
+  const [visible, setVisible] = useState(
     props.visible ?? props.defaultVisible ?? true,
   );
-  let popupRef: HTMLDivElement | undefined;
+  const popupRef = useRef<HTMLDivElement>(null);
 
-  createEffect(() => {
+  useEffect(() => {
     if (props.visible !== undefined) setVisible(props.visible);
-  });
+  }, [props.visible]);
 
-  const handleWindowClick = (evt: MouseEvent) => {
-    if (!popupRef) return;
-    if (!popupRef.contains(evt.target as Node)) {
-      props.onUnfocus?.(evt);
-    }
-  };
+  useEffect(() => {
+    const handleWindowClick = (evt: MouseEvent) => {
+      if (!popupRef.current) return;
+      if (!popupRef.current.contains(evt.target as Node)) {
+        props.onUnfocus?.(evt);
+      }
+    };
 
-  onMount(() => window.addEventListener("click", handleWindowClick));
-  onCleanup(() => window.removeEventListener("click", handleWindowClick));
+    window.addEventListener("click", handleWindowClick);
+    return () => window.removeEventListener("click", handleWindowClick);
+  }, [props.onUnfocus]);
 
   return (
     <div
       ref={popupRef}
-      class={joinClasses(
+      className={joinClasses(
         "popup-menu z-index-ontop-high",
         props.cls,
-        visible() ? "" : "hidden",
+        visible ? "" : "hidden",
       )}
-      style={props.style as JSX.CSSProperties}
+      style={props.style as React.CSSProperties}
     >
       {props.children}
     </div>

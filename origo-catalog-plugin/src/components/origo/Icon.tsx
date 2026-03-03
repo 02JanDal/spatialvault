@@ -1,5 +1,4 @@
-import type { JSX } from "solid-js";
-import { Show } from "solid-js";
+import type React from "react";
 import { typeOfIcon, type StyleProp } from "./utils";
 
 export interface OrigoIconProps {
@@ -10,35 +9,32 @@ export interface OrigoIconProps {
 }
 
 export const Icon = (props: OrigoIconProps) => {
-  const iconType = () => typeOfIcon(props.icon);
+  const iconType = typeOfIcon(props.icon);
 
   return (
     <>
-      <Show when={iconType() === "image"}>
+      {iconType === "image" && (
         <img
-          class={props.cls}
-          style={props.style as JSX.CSSProperties}
+          className={props.cls}
+          style={props.style as React.CSSProperties}
           src={props.icon}
           title={props.title}
           alt={props.title}
         />
-      </Show>
-      <Show when={iconType() === "sprite"}>
-        <svg class={props.cls} style={props.style as JSX.CSSProperties}>
-          <Show when={props.title}>
-            <title>{props.title}</title>
-          </Show>
+      )}
+      {iconType === "sprite" && (
+        <svg className={props.cls} style={props.style as React.CSSProperties}>
+          {props.title && <title>{props.title}</title>}
           <use href={props.icon} />
         </svg>
-      </Show>
-      <Show when={iconType() === "svg" || iconType() === "img"}>
-        {/* Origo allows raw SVG/IMG markup strings */}
+      )}
+      {(iconType === "svg" || iconType === "img") && (
         <span
-          class={props.cls}
-          style={props.style as JSX.CSSProperties}
-          innerHTML={props.icon}
+          className={props.cls}
+          style={props.style as React.CSSProperties}
+          dangerouslySetInnerHTML={{ __html: props.icon! }}
         />
-      </Show>
+      )}
     </>
   );
 };

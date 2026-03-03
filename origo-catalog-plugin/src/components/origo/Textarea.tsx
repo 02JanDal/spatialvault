@@ -1,5 +1,5 @@
-import type { JSX } from "solid-js";
-import { createEffect, createSignal } from "solid-js";
+import type React from "react";
+import { useEffect, useState } from "react";
 import { type StyleProp } from "./utils";
 
 export interface OrigoTextareaProps {
@@ -13,15 +13,13 @@ export interface OrigoTextareaProps {
 }
 
 export const Textarea = (props: OrigoTextareaProps) => {
-  const [value, setValue] = createSignal(props.value ?? "");
+  const [value, setValue] = useState(props.value ?? "");
 
-  createEffect(() => {
+  useEffect(() => {
     if (props.value !== undefined) setValue(props.value);
-  });
+  }, [props.value]);
 
-  const handleInput: JSX.EventHandlerUnion<HTMLTextAreaElement, InputEvent> = (
-    evt,
-  ) => {
+  const handleChange = (evt: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = evt.currentTarget.value;
     setValue(newValue);
     props.onChange?.(newValue);
@@ -32,10 +30,10 @@ export const Textarea = (props: OrigoTextareaProps) => {
       placeholder={props.placeholderText}
       rows={props.rows ?? 3}
       cols={props.cols ?? 30}
-      class={props.cls}
-      style={props.style as JSX.CSSProperties}
-      value={value()}
-      onInput={handleInput}
+      className={props.cls}
+      style={props.style as React.CSSProperties}
+      value={value}
+      onChange={handleChange}
     />
   );
 };

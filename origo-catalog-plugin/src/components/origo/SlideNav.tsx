@@ -1,5 +1,5 @@
-import type { JSX } from "solid-js";
-import { createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import type React from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Button from "./Button";
 import { joinClasses, type StyleProp } from "./utils";
 
@@ -7,8 +7,8 @@ export interface OrigoSlideNavProps {
   backIcon?: string;
   cls?: string;
   style?: StyleProp;
-  main: JSX.Element;
-  secondary: JSX.Element;
+  main: React.ReactNode;
+  secondary: React.ReactNode;
   secondaryTitle?: string;
   secondaryLabelCls?: string;
   initial?: "main" | "secondary";
@@ -16,97 +16,113 @@ export interface OrigoSlideNavProps {
 }
 
 export const SlideNav = (props: OrigoSlideNavProps) => {
-  const [active, setActive] = createSignal(props.initial ?? "main");
-  let slidenavEl: HTMLDivElement | undefined;
-  let mainEl: HTMLDivElement | undefined;
-  let secondaryEl: HTMLDivElement | undefined;
-  const [absoluteMain, setAbsoluteMain] = createSignal(false);
-  const [absoluteSecondary, setAbsoluteSecondary] = createSignal(true);
+  const [active, setActive] = useState(props.initial ?? "main");
+  const slidenavRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const secondaryRef = useRef<HTMLDivElement>(null);
+  const [absoluteMain, setAbsoluteMain] = useState(false);
+  const [absoluteSecondary, setAbsoluteSecondary] = useState(true);
 
   const slideToMain = () => setActive("main");
 
-  const animateHeight = (currentSlide: HTMLElement, newSlide: HTMLElement) => {
-    if (!slidenavEl) return;
-    const newHeight = newSlide.scrollHeight;
-    const currentHeight = currentSlide.scrollHeight;
-    const elementTransition = slidenavEl.style.transition;
-    slidenavEl.style.transition = "";
-
-    requestAnimationFrame(() => {
-      slidenavEl!.style.height = `${currentHeight}px`;
-      slidenavEl!.style.transition = elementTransition;
-
-      requestAnimationFrame(() => {
-        slidenavEl!.style.height = `${newHeight}px`;
-      });
-    });
-  };
-
-  const onTransitionEnd = () => {
-    if (!slidenavEl || !mainEl || !secondaryEl) return;
+  const onTransitionEnd = useCallback(() => {
+    const slidenavEl = slidenavRef.current;
+    if (!slidenavEl || !mainRef.current || !secondaryRef.current) return;
     slidenavEl.removeEventListener("transitionend", onTransitionEnd);
     slidenavEl.style.height = "";
     setAbsoluteMain((value) => !value);
     setAbsoluteSecondary((value) => !value);
-  };
+  }, []);
 
-  const applySecondary = () => {
+  const animateHeight = useCallback(
+    (currentSlide: HTMLElement, newSlide: HTMLElement) => {
+      const slidenavEl = slidenavRef.current;
+      if (!slidenavEl) return;
+      const newHeight = newSlide.scrollHeight;
+      const currentHeight = currentSlide.scrollHeight;
+      const elementTransition = slidenavEl.style.transition;
+      slidenavEl.style.transition = "";
+
+      requestAnimationFrame(() => {
+        slidenavEl.style.height = `${currentHeight}px`;
+        slidenavEl.style.transition = elementTransition;
+
+        requestAnimationFrame(() => {
+          slidenavEl.style.height = `${newHeight}px`;
+        });
+      });
+    },
+    [],
+  );
+
+  const applySecondary = useCallback(() => {
+    const slidenavEl = slidenavRef.current;
+    const mainEl = mainRef.current;
+    const secondaryEl = secondaryRef.current;
     if (!slidenavEl || !mainEl || !secondaryEl) return;
     slidenavEl.classList.add("slide-secondary");
     animateHeight(mainEl, secondaryEl);
     slidenavEl.addEventListener("transitionend", onTransitionEnd);
     props.onSlide?.("secondary");
-  };
+  }, [animateHeight, onTransitionEnd, props.onSlide]);
 
-  const applyMain = () => {
+  const applyMain = useCallback(() => {
+    const slidenavEl = slidenavRef.current;
+    const mainEl = mainRef.current;
+    const secondaryEl = secondaryRef.current;
     if (!slidenavEl || !mainEl || !secondaryEl) return;
     slidenavEl.classList.remove("slide-secondary");
     animateHeight(secondaryEl, mainEl);
     slidenavEl.addEventListener("transitionend", onTransitionEnd);
     props.onSlide?.("main");
-  };
+  }, [animateHeight, onTransitionEnd, props.onSlide]);
 
-  createEffect(() => {
-    if (!slidenavEl || !mainEl || !secondaryEl) return;
-    if (active() === "secondary") {
+  useEffect(() => {
+    if (!slidenavRef.current || !mainRef.current || !secondaryRef.current)
+      return;
+    if (active === "secondary") {
       applySecondary();
     } else {
       applyMain();
     }
-  });
+  }, [active, applySecondary, applyMain]);
 
-  onMount(() => {
-    if (active() === "secondary") {
+  useEffect(() => {
+    if (active === "secondary") {
       applySecondary();
     }
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  onCleanup(() => {
-    if (slidenavEl)
-      slidenavEl.removeEventListener("transitionend", onTransitionEnd);
-  });
+  useEffect(() => {
+    const slidenavEl = slidenavRef.current;
+    return () => {
+      if (slidenavEl)
+        slidenavEl.removeEventListener("transitionend", onTransitionEnd);
+    };
+  }, [onTransitionEnd]);
 
   return (
     <div
-      ref={slidenavEl}
-      class={joinClasses(props.cls ?? "right", "slidenav")}
-      style={props.style as JSX.CSSProperties}
+      ref={slidenavRef}
+      className={joinClasses(props.cls ?? "right", "slidenav")}
+      style={props.style as React.CSSProperties}
     >
       <div
-        ref={mainEl}
-        class={joinClasses(
+        ref={mainRef}
+        className={joinClasses(
           "main overflow-unset",
-          absoluteMain() ? "absolute" : "",
+          absoluteMain ? "absolute" : "",
         )}
       >
         {props.main}
       </div>
       <div
-        ref={secondaryEl}
-        class={joinClasses("secondary", absoluteSecondary() ? "absolute" : "")}
+        ref={secondaryRef}
+        className={joinClasses("secondary", absoluteSecondary ? "absolute" : "")}
       >
-        <div class="flex column">
-          <div class="flex row padding-y-small align-center no-grow">
+        <div className="flex column">
+          <div className="flex row padding-y-small align-center no-grow">
             <Button
               cls="icon-small padding-small"
               icon={props.backIcon ?? "#ic_chevron_left_24px"}
@@ -115,7 +131,7 @@ export const SlideNav = (props: OrigoSlideNavProps) => {
               onClick={() => slideToMain()}
             />
             <div
-              class={joinClasses(
+              className={joinClasses(
                 props.secondaryLabelCls,
                 "grow pointer no-select",
               )}
@@ -124,7 +140,7 @@ export const SlideNav = (props: OrigoSlideNavProps) => {
               {props.secondaryTitle ?? ""}
             </div>
           </div>
-          <div class="divider horizontal"></div>
+          <div className="divider horizontal"></div>
           {props.secondary}
         </div>
       </div>
