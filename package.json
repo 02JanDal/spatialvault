@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prepare": "vite build"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.21",
@@ -22,5 +23,16 @@
     "prettier": "^3.8.1",
     "typescript": "~5.9.3",
     "vite": "^7.2.4"
+  },
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/catalog-plugin.umd.cjs",
+  "module": "./dist/catalog-plugin.js",
+  "exports": {
+    ".": {
+      "import": "./dist/catalog-plugin.js",
+      "require": "./dist/catalog-plugin.umd.cjs"
+    }
   }
 }
