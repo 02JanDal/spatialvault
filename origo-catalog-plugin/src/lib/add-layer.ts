@@ -19,11 +19,12 @@ export function addCollectionToMap(
   const existing = viewer.getLayer(collection.id);
   if (existing) return;
 
+  /* TODO: re-enable when better tested
   const tilesLink = findTilesLink(collection);
   if (tilesLink) {
     addTileLayer(viewer, collection, tilesLink);
     return;
-  }
+  }*/
 
   const itemsLink = findItemsLink(collection);
   if (itemsLink) {
