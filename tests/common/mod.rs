@@ -327,6 +327,7 @@ impl TestApp {
             oidc: None,
             s3: Some(cloudserver.s3_config(test_bucket)),
             base_url: "http://localhost:8080".to_string(),
+            cors_origins: None,
         });
 
         let storage = Arc::new(S3Storage::new(config.s3.as_ref().unwrap()).unwrap());

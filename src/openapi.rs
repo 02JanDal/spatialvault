@@ -258,6 +258,7 @@ mod tests {
             oidc: None,
             s3: None,
             base_url: "http://localhost:8080".to_string(),
+            cors_origins: None,
         }
     }
 
