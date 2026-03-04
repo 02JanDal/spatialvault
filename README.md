@@ -1,6 +1,8 @@
 # Origo Catalog Plugin
 
-A catalog browser UI for SpatialVault, built as an [Origo](https://github.com/origo-map/origo) web map plugin using Solid.js and TypeScript. It connects to OGC API / STAC backends and lets users browse, search, and add collections to the map.
+A catalog browser UI for SpatialVault, built as an [Origo](https://github.com/origo-map/origo) web map plugin using
+Solid.js and TypeScript. It connects to OGC API / STAC backends and lets users browse, search, and add collections to
+the map.
 
 ## Architecture
 
@@ -16,7 +18,8 @@ Catalog (main component)
     └── FolderView    — collections in a selected folder
 ```
 
-Collections are fetched via `GET {url}/collections` (with pagination). Each collection's `id` is split on `:` to derive a folder hierarchy. Collections are displayed as cards with title, description, and an "Add to map" button.
+Collections are fetched via `GET {url}/collections` (with pagination). Each collection's `id` is split on `:` to derive
+a folder hierarchy. Collections are displayed as cards with title, description, and an "Add to map" button.
 
 ### Adding layers to the map
 
@@ -31,13 +34,13 @@ The plugin accepts an array of catalog sources:
 
 ```typescript
 CatalogPlugin({
-  catalogs: [
-    {
-      url: "https://my-spatialvault.example.com",
-      type: "ogc-stac",
-      name: "My Catalog",
-    },
-  ],
+    catalogs: [
+        {
+            url: "https://my-spatialvault.example.com",
+            type: "ogc-stac",
+            name: "My Catalog",
+        },
+    ],
 });
 ```
 
@@ -48,7 +51,8 @@ npm install
 npm run dev
 ```
 
-This starts a Vite dev server with a local Origo instance. By default it points at `http://localhost:8484` as the catalog source — adjust in `src/index.tsx` or run a local SpatialVault instance.
+This starts a Vite dev server with a local Origo instance. By default it points at `http://localhost:8484` as the
+catalog source — adjust in `src/app.tsx` or run a local SpatialVault instance.
 
 ## Build
 
@@ -62,7 +66,7 @@ Outputs to `dist/`.
 
 ```
 src/
-├── index.tsx                  # Plugin entry point + Origo integration
+├── app.tsx                  # Plugin entry point + Origo integration
 ├── index.css                  # All styles
 ├── Catalog.tsx                # Main component, sidebar, data loading
 ├── components/

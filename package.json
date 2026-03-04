@@ -22,17 +22,20 @@
     "@vitejs/plugin-react": "^4.5.2",
     "prettier": "^3.8.1",
     "typescript": "~5.9.3",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "vite-plugin-dts": "^4.5.4"
   },
   "files": [
     "dist"
   ],
   "main": "./dist/catalog-plugin.umd.cjs",
   "module": "./dist/catalog-plugin.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "import": "./dist/catalog-plugin.js",
-      "require": "./dist/catalog-plugin.umd.cjs"
+      "require": "./dist/catalog-plugin.umd.cjs",
+      "types": "./dist/index.d.ts"
     }
   }
 }
