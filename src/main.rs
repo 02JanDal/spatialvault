@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::{
     compression::CompressionLayer,
-    cors::{Any, CorsLayer},
+    cors::{AllowOrigin, Any, CorsLayer},
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -218,6 +218,7 @@ fn build_router(
     let openapi = Arc::new(openapi);
 
     // Convert to regular Router and add extensions/layers
+    let cors = build_cors_layer(&config);
     Router::from(api_router)
         .layer(Extension(config))
         .layer(Extension(openapi))
@@ -225,12 +226,7 @@ fn build_router(
             spatialvault::api::link_header_middleware,
         ))
         .layer(CompressionLayer::new())
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
+        .layer(cors)
         .layer(TraceLayer::new_for_http())
 }
 
@@ -279,6 +275,7 @@ fn build_router_no_auth(
 
     let openapi = Arc::new(openapi);
 
+    let cors = build_cors_layer(&config);
     Router::from(api_router)
         .layer(Extension(config))
         .layer(Extension(openapi))
@@ -286,11 +283,26 @@ fn build_router_no_auth(
             spatialvault::api::link_header_middleware,
         ))
         .layer(CompressionLayer::new())
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
+        .layer(cors)
         .layer(TraceLayer::new_for_http())
+}
+
+fn build_cors_layer(config: &Config) -> CorsLayer {
+    let cors = CorsLayer::new().allow_methods(Any).allow_headers(Any);
+
+    match &config.cors_origins {
+        Some(pattern) => {
+            let re = regex::Regex::new(&format!("^(?:{pattern})$"))
+                .expect("Invalid cors_origins regex pattern");
+            tracing::info!("CORS: allowing origins matching {}", re.as_str());
+            cors.allow_origin(AllowOrigin::predicate(move |origin, _| {
+                origin.as_bytes().iter().all(|b| b.is_ascii())
+                    && re.is_match(origin.to_str().unwrap_or(""))
+            }))
+        }
+        None => {
+            tracing::info!("CORS: allowing all origins");
+            cors.allow_origin(Any)
+        }
+    }
 }

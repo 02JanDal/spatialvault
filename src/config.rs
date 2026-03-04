@@ -15,6 +15,9 @@ pub struct Config {
     pub s3: Option<S3Config>,
     #[serde(default = "default_base_url")]
     pub base_url: String,
+    /// Regex pattern for allowed CORS origins. If omitted, all origins are allowed.
+    /// Example: `https?://(mydomain|myotherdomain)\.com`
+    pub cors_origins: Option<String>,
 }
 
 // Custom Debug implementation to prevent secrets from being logged
@@ -28,6 +31,7 @@ impl fmt::Debug for Config {
             .field("oidc", &self.oidc)
             .field("s3", &self.s3)
             .field("base_url", &self.base_url)
+            .field("cors_origins", &self.cors_origins)
             .finish()
     }
 }
