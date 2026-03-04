@@ -51,9 +51,18 @@ async fn main() -> anyhow::Result<()> {
     db.run_migrations().await?;
     tracing::info!("Migrations complete");
 
-    // Initialize S3 storage
-    let storage = Arc::new(S3Storage::new(&config.s3)?);
-    tracing::info!("S3 storage initialized");
+    // Initialize S3 storage (optional)
+    let storage = match config.s3 {
+        Some(ref s3_config) => {
+            let s = Arc::new(S3Storage::new(s3_config)?);
+            tracing::info!("S3 storage initialized");
+            Some(s)
+        }
+        None => {
+            tracing::info!("No S3 storage configured — file uploads will be imported synchronously");
+            None
+        }
+    };
 
     // Create services
     let collection_service = Arc::new(CollectionService::new(db.clone(), config.base_url.clone()));
@@ -70,7 +79,13 @@ async fn main() -> anyhow::Result<()> {
     let item_service = Arc::new(ItemService::new(db.clone()));
 
     if worker_mode {
-        // Run as background job worker
+        // Run as background job worker — S3 is required
+        let storage = storage.ok_or_else(|| {
+            anyhow::anyhow!(
+                "S3 storage configuration is required for worker mode. \
+                 Set SPATIALVAULT__S3__BUCKET and related environment variables."
+            )
+        })?;
         tracing::info!("Starting SpatialVault in worker mode");
 
         let worker = JobWorker::new(
@@ -148,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
 fn build_router(
     config: Arc<Config>,
     auth_state: AuthState,
-    storage: Arc<S3Storage>,
+    storage: Option<Arc<S3Storage>>,
     collection_service: Arc<CollectionService>,
     feature_service: Arc<FeatureService>,
     tile_service: Arc<TileService>,
@@ -221,7 +236,7 @@ fn build_router(
 
 fn build_router_no_auth(
     config: Arc<Config>,
-    storage: Arc<S3Storage>,
+    storage: Option<Arc<S3Storage>>,
     collection_service: Arc<CollectionService>,
     feature_service: Arc<FeatureService>,
     tile_service: Arc<TileService>,

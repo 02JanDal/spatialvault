@@ -211,7 +211,7 @@ impl OperationInput for UpdateFeaturePayload {
 pub async fn resolve_asset_uploads(
     assets: &mut Option<Assets>,
     files: HashMap<String, UploadedFile>,
-    storage: &S3Storage,
+    storage: Option<&S3Storage>,
 ) -> Result<(), AppError> {
     let assets_map = match assets {
         Some(m) if !m.is_empty() => m,
@@ -253,6 +253,14 @@ pub async fn resolve_asset_uploads(
         }
         return Ok(());
     }
+
+    // @-mentions require storage
+    let storage = storage.ok_or_else(|| {
+        BadRequest {
+            message: "Asset file uploads require S3 storage to be configured".to_string(),
+        }
+        .build()
+    })?;
 
     // Validate 1:1 mapping between @-mentions and file parts
     let file_names: HashSet<&String> = files.keys().collect();

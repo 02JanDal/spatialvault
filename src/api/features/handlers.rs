@@ -30,7 +30,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
-type FeatureState = (Arc<S3Storage>, Arc<FeatureService>);
+type FeatureState = (Option<Arc<S3Storage>>, Arc<FeatureService>);
 
 /// Parse a feature ID string as UUID, returning 404 if invalid.
 fn parse_feature_id(id: &str) -> Result<Uuid, AppError> {
@@ -322,7 +322,7 @@ pub async fn create_feature(
         CreateFeaturePayload::Json(r) => (r, HashMap::new()),
         CreateFeaturePayload::Multipart { item, files } => (item, files),
     };
-    resolve_asset_uploads(&mut request.assets, files, &storage).await?;
+    resolve_asset_uploads(&mut request.assets, files, storage.as_deref()).await?;
 
     // Extract datetime from properties if present
     let datetime = request
@@ -386,7 +386,7 @@ pub async fn update_feature(
         UpdateFeaturePayload::Json(r) => (r, HashMap::new()),
         UpdateFeaturePayload::Multipart { item, files } => (item, files),
     };
-    resolve_asset_uploads(&mut request.assets, files, &storage).await?;
+    resolve_asset_uploads(&mut request.assets, files, storage.as_deref()).await?;
 
     // Extract datetime from properties if present
     let datetime = request
@@ -439,7 +439,7 @@ pub async fn replace_feature(
         CreateFeaturePayload::Json(r) => (r, HashMap::new()),
         CreateFeaturePayload::Multipart { item, files } => (item, files),
     };
-    resolve_asset_uploads(&mut request.assets, files, &storage).await?;
+    resolve_asset_uploads(&mut request.assets, files, storage.as_deref()).await?;
 
     // Extract datetime from properties if present
     let datetime = request
@@ -507,7 +507,7 @@ fn delete_feature_docs(op: TransformOperation) -> TransformOperation {
         .response_with::<412, (), _>(|res| res.description("Precondition failed (ETag mismatch)"))
 }
 
-pub fn routes(storage: Arc<S3Storage>, service: Arc<FeatureService>) -> ApiRouter {
+pub fn routes(storage: Option<Arc<S3Storage>>, service: Arc<FeatureService>) -> ApiRouter {
     ApiRouter::new()
         .api_route(
             CollectionItemsPath::PATH,

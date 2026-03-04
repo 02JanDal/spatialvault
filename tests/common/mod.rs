@@ -325,11 +325,11 @@ impl TestApp {
                 dev_auth: false,
             },
             oidc: None,
-            s3: cloudserver.s3_config(test_bucket),
+            s3: Some(cloudserver.s3_config(test_bucket)),
             base_url: "http://localhost:8080".to_string(),
         });
 
-        let storage = Arc::new(S3Storage::new(&config.s3).unwrap());
+        let storage = Arc::new(S3Storage::new(config.s3.as_ref().unwrap()).unwrap());
 
         // Connect to database
         let db = Arc::new(
@@ -364,7 +364,7 @@ impl TestApp {
             config.clone(),
             &mut openapi,
             mock_auth,
-            storage.clone(),
+            Some(storage.clone()),
             collection_service,
             feature_service,
             tile_service,
@@ -388,7 +388,7 @@ impl TestApp {
         config: Arc<Config>,
         openapi: &mut aide::openapi::OpenApi,
         mock_auth: MockAuthState,
-        s3: Arc<S3Storage>,
+        s3: Option<Arc<S3Storage>>,
         collection_service: Arc<CollectionService>,
         feature_service: Arc<FeatureService>,
         tile_service: Arc<TileService>,
@@ -577,7 +577,7 @@ impl TestApp {
             self.config.clone(),
             &mut openapi,
             mock_auth,
-            self.s3.clone(),
+            Some(self.s3.clone()),
             collection_service,
             feature_service,
             tile_service,

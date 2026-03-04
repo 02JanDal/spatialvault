@@ -615,7 +615,7 @@ impl JobWorker {
         }
     }
 
-    /// Process import-vector job: import features from vector file to collection
+    /// Process import-vector job: download from S3, then delegate to shared import logic
     async fn process_import_vector(
         &self,
         job_id: Uuid,
@@ -623,11 +623,11 @@ impl JobWorker {
         inputs: &serde_json::Value,
     ) -> AppResult<serde_json::Value> {
         use crate::api::processes::import_vector::ImportVectorInputs;
-        use crate::processing::vector::VectorImporter;
+        use crate::processing::import::import_vector_file;
 
         let inputs: ImportVectorInputs = serde_json::from_value(inputs.clone())?;
 
-        // 1. Download file from S3 to temp (progress: 10%)
+        // 1. Download file from S3 to temp
         self.process_service
             .update_job_status(job_id, "running", Some("Downloading file"), Some(10))
             .await?;
@@ -636,160 +636,29 @@ impl JobWorker {
             .download_file(&format!("s3://{}", inputs.file_key), job_id)
             .await?;
 
-        // 2. Open with GDAL (progress: 15%)
+        // 2. Import via shared logic
         self.process_service
-            .update_job_status(job_id, "running", Some("Opening vector file"), Some(15))
+            .update_job_status(job_id, "running", Some("Importing features"), Some(20))
             .await?;
 
-        let mut importer = VectorImporter::open(&file_path)?;
-        let source_crs = importer.get_source_crs()?;
-        let total_features = importer.feature_count()?;
+        let result = import_vector_file(
+            &self.db,
+            &self.collection_service,
+            &file_path,
+            owner,
+            &inputs.collection_id,
+        )
+        .await?;
 
-        tracing::info!(
-            "Importing {} features from {} (EPSG:{})",
-            total_features,
-            file_path.display(),
-            source_crs
-        );
-
-        // 3. Get collection and storage CRS (progress: 20%)
-        self.process_service
-            .update_job_status(job_id, "running", Some("Loading collection"), Some(20))
-            .await?;
-
-        let collection_with_crs = self
-            .collection_service
-            .get_collection(owner, &inputs.collection_id)
-            .await?;
-
-        let collection = collection_with_crs.as_collection();
-        let storage_crs = collection_with_crs.storage_crs;
-
-        // 4. Import features in batches (progress: 20-90%)
-        let batch_size = 1000;
-        let mut imported = 0;
-        let mut failed = 0;
-
-        loop {
-            let batch = importer.read_features_batch(imported, batch_size)?;
-            if batch.is_empty() {
-                break;
-            }
-
-            // Begin transaction for batch
-            let mut tx = self.db.pool().begin().await?;
-
-            for feature in batch {
-                match self
-                    .insert_feature(&mut tx, &collection, &feature, source_crs, storage_crs)
-                    .await
-                {
-                    Ok(_) => imported += 1,
-                    Err(e) => {
-                        failed += 1;
-                        tracing::warn!("Failed to import feature: {}", e);
-                    }
-                }
-            }
-
-            // Commit batch
-            tx.commit().await?;
-
-            // Update progress
-            let progress = 20 + ((imported as f64 / total_features as f64) * 70.0) as i32;
-            self.process_service
-                .update_job_status(
-                    job_id,
-                    "running",
-                    Some(&format!(
-                        "Imported {}/{} features",
-                        imported, total_features
-                    )),
-                    Some(progress),
-                )
-                .await?;
-        }
-
-        // 5. Cleanup temp file (progress: 95%)
+        // 3. Cleanup temp file
         tokio::fs::remove_file(&file_path).await.ok();
 
-        // 6. Return outputs (progress: 100%)
         Ok(serde_json::json!({
             "collection": inputs.collection_id,
-            "features_imported": imported,
-            "features_failed": failed,
-            "source_crs": format!("EPSG:{}", source_crs),
-            "target_crs": format!("EPSG:{}", storage_crs),
+            "features_imported": result.features_imported,
+            "features_failed": result.features_failed,
+            "source_crs": format!("EPSG:{}", result.source_crs),
+            "target_crs": format!("EPSG:{}", result.target_crs),
         }))
-    }
-
-    /// Insert a single feature into the collection
-    async fn insert_feature(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        collection: &Collection,
-        feature: &crate::processing::vector::VectorFeature,
-        source_crs: i32,
-        storage_crs: i32,
-    ) -> AppResult<()> {
-        // Build the SQL query to insert feature
-        // Use ST_Transform if CRS differs, otherwise just ST_GeomFromText
-        let transform_fn = if source_crs == storage_crs {
-            format!("ST_GeomFromText($1, {})", storage_crs)
-        } else {
-            format!(
-                "ST_Transform(ST_GeomFromText($1, {}), {})",
-                source_crs, storage_crs
-            )
-        };
-
-        let quoted_schema = self.quote_ident(&collection.schema_name);
-        let quoted_table = self.quote_ident(&collection.table_name);
-
-        // Get user columns to determine insert strategy
-        let user_columns = self
-            .collection_service
-            .get_user_columns(&mut **tx, collection)
-            .await?;
-
-        if user_columns.is_empty() {
-            let query = format!(
-                "INSERT INTO {quoted_schema}.{quoted_table} (geometry) VALUES ({transform_fn})",
-            );
-            sqlx::query(&query)
-                .bind(&feature.geometry_wkt)
-                .execute(&mut **tx)
-                .await?;
-        } else {
-            // Use jsonb_populate_record to decompose properties into columns
-            let col_names: Vec<String> = user_columns
-                .iter()
-                .map(|c| self.quote_ident(&c.name))
-                .collect();
-            let col_refs: Vec<String> = user_columns
-                .iter()
-                .map(|c| format!("r.{}", self.quote_ident(&c.name)))
-                .collect();
-
-            let query = format!(
-                "INSERT INTO {quoted_schema}.{quoted_table} (geometry, {cols}) \
-                 SELECT {transform_fn}, {col_refs} \
-                 FROM jsonb_populate_record(NULL::{quoted_schema}.{quoted_table}, $2) r",
-                cols = col_names.join(", "),
-                col_refs = col_refs.join(", "),
-            );
-            sqlx::query(&query)
-                .bind(&feature.geometry_wkt)
-                .bind(&feature.properties)
-                .execute(&mut **tx)
-                .await?;
-        }
-
-        Ok(())
-    }
-
-    /// Quote a PostgreSQL identifier (schema or table name)
-    fn quote_ident(&self, ident: &str) -> String {
-        format!("\"{}\"", ident.replace('"', "\"\""))
     }
 }

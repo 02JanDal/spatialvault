@@ -30,7 +30,11 @@ use std::time::SystemTime;
 use uuid::Uuid;
 
 // Type alias for the shared state tuple
-type AppState = (Arc<S3Storage>, Arc<CollectionService>, Arc<ProcessService>);
+type AppState = (
+    Option<Arc<S3Storage>>,
+    Arc<CollectionService>,
+    Arc<ProcessService>,
+);
 
 /// Build the list of CRSes supported for retrieving features from a collection
 /// Always includes WGS84, and adds storage CRS if it's different from WGS84
@@ -309,9 +313,11 @@ pub async fn create_collection(
     // Generate collection UUID upfront so we can reference it in import job inputs
     let collection_id = Uuid::new_v4();
 
-    // If a file is present: detect columns and upload to S3 before creating collection
+    // If a file is present: detect columns and either upload to S3 or prepare for sync import
     let mut columns = metadata.columns.clone();
     let mut import_job_inputs = None;
+    // Temp file path for sync import (no S3)
+    let mut sync_import_file: Option<std::path::PathBuf> = None;
 
     if let Some(ref file) = file {
         // Auto-detect columns from the uploaded file if none were specified
@@ -340,17 +346,25 @@ pub async fn create_collection(
             }
         }
 
-        // Upload to S3 before creating the collection (if upload fails, no DB changes)
-        let key = format!("{}-{}", Uuid::new_v4(), file.filename);
-        storage.put(&key, file.data.clone()).await?;
+        if let Some(ref storage) = storage {
+            // S3 available: upload file and create async job
+            let key = format!("{}-{}", Uuid::new_v4(), file.filename);
+            storage.put(&key, file.data.clone()).await?;
 
-        import_job_inputs = Some(
-            serde_json::to_value(ImportVectorInputs {
-                collection_id: canonical_name.clone(),
-                file_key: key,
-            })
-            .unwrap(),
-        );
+            import_job_inputs = Some(
+                serde_json::to_value(ImportVectorInputs {
+                    collection_id: canonical_name.clone(),
+                    file_key: key,
+                })
+                .unwrap(),
+            );
+        } else {
+            // No S3: write to temp file for synchronous import after collection creation
+            let temp_path =
+                std::env::temp_dir().join(format!("sync_import_{}", file.filename));
+            tokio::fs::write(&temp_path, &file.data).await?;
+            sync_import_file = Some(temp_path);
+        }
     }
 
     let collection = service
@@ -369,6 +383,33 @@ pub async fn create_collection(
                 .map(|inputs| (user.username.as_str(), "import-vector", inputs)),
         )
         .await?;
+
+    // Synchronous vector import when no S3 is configured
+    if let Some(ref temp_path) = sync_import_file {
+        let result = crate::processing::import::import_vector_file(
+            service.db(),
+            &service,
+            temp_path,
+            &owner,
+            &canonical_name,
+        )
+        .await;
+
+        // Clean up temp file regardless of result
+        tokio::fs::remove_file(temp_path).await.ok();
+
+        if let Err(e) = result {
+            tracing::error!("Synchronous vector import failed: {}", e);
+            return Err(e);
+        }
+
+        let result = result.unwrap();
+        tracing::info!(
+            "Synchronous import complete: {} imported, {} failed",
+            result.features_imported,
+            result.features_failed,
+        );
+    }
 
     let base_url = &config.base_url;
 
@@ -615,7 +656,7 @@ fn get_collection_queryables_docs(op: TransformOperation) -> TransformOperation 
 }
 
 pub fn routes(
-    storage: Arc<S3Storage>,
+    storage: Option<Arc<S3Storage>>,
     service: Arc<CollectionService>,
     process_service: Arc<ProcessService>,
 ) -> ApiRouter {

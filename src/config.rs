@@ -12,8 +12,7 @@ pub struct Config {
     #[serde(default)]
     pub auth: AuthConfig,
     pub oidc: Option<OidcConfig>,
-    #[serde(default)]
-    pub s3: S3Config,
+    pub s3: Option<S3Config>,
     #[serde(default = "default_base_url")]
     pub base_url: String,
 }
@@ -87,7 +86,7 @@ fn default_audience() -> String {
     "spatialvault".to_string()
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct S3Config {
     #[serde(default)]
     pub endpoint: Option<String>,

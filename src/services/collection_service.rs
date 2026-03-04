@@ -140,6 +140,10 @@ impl CollectionService {
         Self { db, base_url }
     }
 
+    pub fn db(&self) -> &Arc<Database> {
+        &self.db
+    }
+
     pub async fn list_collections(
         &self,
         username: &str,

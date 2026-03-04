@@ -256,7 +256,7 @@ mod tests {
                 dev_auth: false,
             },
             oidc: None,
-            s3: crate::config::S3Config::default(),
+            s3: None,
             base_url: "http://localhost:8080".to_string(),
         }
     }
