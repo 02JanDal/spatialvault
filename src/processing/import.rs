@@ -108,11 +108,7 @@ pub async fn import_vector_file(
         tx.commit().await?;
     }
 
-    tracing::info!(
-        "Import complete: {} imported, {} failed",
-        imported,
-        failed,
-    );
+    tracing::info!("Import complete: {} imported, {} failed", imported, failed,);
 
     Ok(ImportResult {
         features_imported: imported,
@@ -156,10 +152,7 @@ async fn insert_feature(
             .execute(&mut **tx)
             .await?;
     } else {
-        let col_names: Vec<String> = user_columns
-            .iter()
-            .map(|c| quote_ident(&c.name))
-            .collect();
+        let col_names: Vec<String> = user_columns.iter().map(|c| quote_ident(&c.name)).collect();
         let col_refs: Vec<String> = user_columns
             .iter()
             .map(|c| format!("r.{}", quote_ident(&c.name)))

@@ -360,8 +360,7 @@ pub async fn create_collection(
             );
         } else {
             // No S3: write to temp file for synchronous import after collection creation
-            let temp_path =
-                std::env::temp_dir().join(format!("sync_import_{}", file.filename));
+            let temp_path = std::env::temp_dir().join(format!("sync_import_{}", file.filename));
             tokio::fs::write(&temp_path, &file.data).await?;
             sync_import_file = Some(temp_path);
         }

@@ -59,7 +59,9 @@ async fn main() -> anyhow::Result<()> {
             Some(s)
         }
         None => {
-            tracing::info!("No S3 storage configured — file uploads will be imported synchronously");
+            tracing::info!(
+                "No S3 storage configured — file uploads will be imported synchronously"
+            );
             None
         }
     };
