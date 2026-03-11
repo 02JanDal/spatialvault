@@ -79,11 +79,32 @@ pub struct AuthConfig {
     pub dev_auth: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct OidcConfig {
     pub issuer_url: String,
     #[serde(default = "default_audience")]
     pub audience: String,
+    /// Client ID for token introspection (required for opaque token support)
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// Client secret for token introspection (required for opaque token support)
+    #[serde(default)]
+    pub client_secret: Option<String>,
+}
+
+// Custom Debug implementation to redact client_secret
+impl fmt::Debug for OidcConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OidcConfig")
+            .field("issuer_url", &self.issuer_url)
+            .field("audience", &self.audience)
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
 }
 
 fn default_audience() -> String {
