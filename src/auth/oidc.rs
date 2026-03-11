@@ -14,6 +14,13 @@ use crate::error::{AppResult, Config, Internal, Unauthorized};
 use snafu::OptionExt;
 use tokio::time::timeout;
 
+/// Default time-to-live (in seconds) for cached introspection results when the
+/// introspection response does not include an `exp` claim.
+const DEFAULT_INTROSPECTION_TTL_SECS: i64 = 300;
+
+/// Maximum number of entries in the token cache before expired entries are pruned.
+const CACHE_PRUNE_THRESHOLD: usize = 10_000;
+
 // Create an async HTTP client for openidconnect
 fn http_client() -> Result<openidconnect::reqwest::Client, openidconnect::reqwest::Error> {
     openidconnect::reqwest::ClientBuilder::new().build()
@@ -84,7 +91,16 @@ pub struct OidcValidator {
 
 /// Check if a token looks like a JWT (three Base64URL segments separated by dots)
 fn is_jwt(token: &str) -> bool {
-    token.chars().filter(|c| *c == '.').count() == 2
+    let mut dots = 0;
+    for c in token.chars() {
+        if c == '.' {
+            dots += 1;
+            if dots > 2 {
+                return false;
+            }
+        }
+    }
+    dots == 2
 }
 
 impl OidcValidator {
@@ -145,14 +161,28 @@ impl OidcValidator {
             "{}/.well-known/openid-configuration",
             config.issuer_url.trim_end_matches('/')
         );
-        let introspection_url = async {
-            let resp = reqwest::get(&discovery_url).await.ok()?;
-            let json: serde_json::Value = resp.json().await.ok()?;
-            json.get("introspection_endpoint")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }
-        .await;
+        let introspection_url = match reqwest::get(&discovery_url).await {
+            Ok(resp) => match resp.json::<serde_json::Value>().await {
+                Ok(json) => json
+                    .get("introspection_endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse discovery document for introspection endpoint: {}",
+                        e
+                    );
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to fetch discovery document for introspection endpoint: {}",
+                    e
+                );
+                None
+            }
+        };
 
         if let Some(ref url) = introspection_url {
             tracing::info!("Token introspection endpoint discovered: {}", url);
@@ -205,6 +235,14 @@ impl OidcValidator {
         // Cache the result (keyed by token string, expires at token's exp time)
         {
             let mut cache = self.cache.write().await;
+            // Prune expired entries if cache is getting large
+            if cache.len() >= CACHE_PRUNE_THRESHOLD {
+                let now = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                cache.retain(|_, (_, exp)| now < *exp);
+            }
             cache.insert(token.to_string(), (claims.clone(), claims.exp));
         }
 
@@ -327,7 +365,9 @@ impl OidcValidator {
             aud: introspection
                 .aud
                 .unwrap_or_else(|| OneOrMany::One(self.config.audience.clone())),
-            exp: introspection.exp.unwrap_or(now + 300),
+            exp: introspection
+                .exp
+                .unwrap_or(now + DEFAULT_INTROSPECTION_TTL_SECS),
             iat: introspection.iat.unwrap_or(now),
             preferred_username: introspection.preferred_username,
             email: introspection.email,
