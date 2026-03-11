@@ -1,4 +1,5 @@
 use aide::axum::ApiRouter;
+use axum::http::{Method, header};
 use axum::{Extension, Router, middleware};
 use std::env;
 use std::sync::Arc;
@@ -290,7 +291,17 @@ fn build_router_no_auth(
 }
 
 fn build_cors_layer(config: &Config) -> CorsLayer {
-    let cors = CorsLayer::new().allow_methods(Any).allow_headers(Any);
+    let cors = CorsLayer::new()
+        .allow_methods([
+            Method::GET,
+            Method::HEAD,
+            Method::OPTIONS,
+            Method::PUT,
+            Method::PATCH,
+            Method::POST,
+            Method::DELETE,
+        ])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
 
     match &config.cors_origins {
         Some(pattern) => {
