@@ -145,6 +145,21 @@ impl fmt::Debug for S3Config {
 }
 
 impl Config {
+    /// Returns the path prefix to mount the API under, derived from `base_url`.
+    /// Returns `None` if `base_url` has no meaningful path (i.e. root `/`).
+    pub fn path_prefix(&self) -> Option<String> {
+        match url::Url::parse(&self.base_url) {
+            Err(e) => {
+                tracing::warn!("Failed to parse base_url '{}': {}", self.base_url, e);
+                None
+            }
+            Ok(u) => {
+                let path = u.path().trim_end_matches('/').to_string();
+                if path.is_empty() { None } else { Some(path) }
+            }
+        }
+    }
+
     pub fn load() -> Result<Arc<Self>, config::ConfigError> {
         let config = config::Config::builder()
             .add_source(config::File::with_name("config").required(false))
@@ -168,5 +183,32 @@ mod tests {
     fn test_defaults() {
         assert_eq!(default_host(), "0.0.0.0");
         assert_eq!(default_port(), 8080);
+    }
+
+    #[test]
+    fn test_path_prefix() {
+        let mut cfg = Config {
+            host: default_host(),
+            port: default_port(),
+            database: DatabaseConfig {
+                url: "postgres://localhost/test".to_string(),
+                max_connections: 5,
+            },
+            auth: AuthConfig::default(),
+            oidc: None,
+            s3: None,
+            base_url: "http://localhost:8080".to_string(),
+            cors_origins: None,
+        };
+        assert_eq!(cfg.path_prefix(), None);
+
+        cfg.base_url = "https://example.com/spatialvault".to_string();
+        assert_eq!(cfg.path_prefix(), Some("/spatialvault".to_string()));
+
+        cfg.base_url = "https://example.com/spatialvault/".to_string();
+        assert_eq!(cfg.path_prefix(), Some("/spatialvault".to_string()));
+
+        cfg.base_url = "https://example.com/".to_string();
+        assert_eq!(cfg.path_prefix(), None);
     }
 }
