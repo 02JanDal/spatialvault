@@ -152,6 +152,15 @@ async fn main() -> anyhow::Result<()> {
             )
         };
 
+        // Optionally nest under a path prefix derived from base_url
+        let app = match config.path_prefix().as_deref() {
+            Some(p) => {
+                tracing::info!("Mounting API under path prefix: {}", p);
+                Router::new().nest(p, app)
+            }
+            None => app,
+        };
+
         // Start server
         let addr = format!("{}:{}", config.host, config.port);
         let listener = TcpListener::bind(&addr).await?;
