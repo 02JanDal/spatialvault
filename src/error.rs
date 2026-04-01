@@ -12,6 +12,21 @@ use serde::Serialize;
 use snafu::prelude::*;
 use std::backtrace::Backtrace;
 
+/// Formats an error and its complete source chain for logging.
+///
+/// Walks the `std::error::Error::source()` chain and joins all messages
+/// with `: `, ensuring nested causes are not truncated.
+fn error_chain(err: &dyn std::error::Error) -> String {
+    use std::fmt::Write;
+    let mut msg = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        write!(&mut msg, ": {cause}").unwrap();
+        source = cause.source();
+    }
+    msg
+}
+
 #[derive(Debug, Snafu)]
 #[snafu(context(suffix(false)), visibility(pub))]
 pub enum AppError {
@@ -167,7 +182,7 @@ impl IntoResponse for AppError {
                             .into_response();
                     }
                 }
-                tracing::error!("Database error: {}", source);
+                tracing::error!("Database error: {}", error_chain(source));
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "DatabaseError",
@@ -175,7 +190,7 @@ impl IntoResponse for AppError {
                 )
             }
             AppError::Serialization { source, .. } => {
-                tracing::error!("Serialization error: {}", source);
+                tracing::error!("Serialization error: {}", error_chain(source));
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "SerializationError",
@@ -183,7 +198,7 @@ impl IntoResponse for AppError {
                 )
             }
             AppError::Io { source, .. } => {
-                tracing::error!("IO error: {}", source);
+                tracing::error!("IO error: {}", error_chain(source));
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "IoError",
