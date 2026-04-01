@@ -141,7 +141,7 @@ impl IntoResponse for AppError {
                 )
             }
             AppError::Database { source, .. } => {
-                if let sqlx::Error::Database(ref db_err) = source {
+                if let sqlx::Error::Database(db_err) = &source {
                     // 23505 = unique_violation (e.g. duplicate collection name)
                     if db_err.code().as_deref() == Some("23505") {
                         tracing::info!("Unique constraint violation: {}", db_err);
