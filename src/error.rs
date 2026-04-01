@@ -12,21 +12,6 @@ use serde::Serialize;
 use snafu::prelude::*;
 use std::backtrace::Backtrace;
 
-/// Formats an error and its complete source chain for logging.
-///
-/// Walks the `std::error::Error::source()` chain and joins all messages
-/// with `: `, ensuring nested causes are not truncated.
-fn error_chain(err: &dyn std::error::Error) -> String {
-    let mut msg = err.to_string();
-    let mut source = err.source();
-    while let Some(cause) = source {
-        msg.push_str(": ");
-        msg.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    msg
-}
-
 #[derive(Debug, Snafu)]
 #[snafu(context(suffix(false)), visibility(pub))]
 pub enum AppError {
@@ -126,26 +111,26 @@ pub struct ErrorResponse {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, code, description) = match &self {
+        let (status, code, description) = match self {
             AppError::NotFound { message, .. } => {
-                (StatusCode::NOT_FOUND, "NotFound", message.clone())
+                (StatusCode::NOT_FOUND, "NotFound", message)
             }
             AppError::BadRequest { message, .. } => {
-                (StatusCode::BAD_REQUEST, "BadRequest", message.clone())
+                (StatusCode::BAD_REQUEST, "BadRequest", message)
             }
             AppError::Unauthorized { message, .. } => {
-                (StatusCode::UNAUTHORIZED, "Unauthorized", message.clone())
+                (StatusCode::UNAUTHORIZED, "Unauthorized", message)
             }
             AppError::Forbidden { message, .. } => {
-                (StatusCode::FORBIDDEN, "Forbidden", message.clone())
+                (StatusCode::FORBIDDEN, "Forbidden", message)
             }
             AppError::Conflict { message, .. } => {
-                (StatusCode::CONFLICT, "Conflict", message.clone())
+                (StatusCode::CONFLICT, "Conflict", message)
             }
             AppError::PreconditionFailed { message, .. } => (
                 StatusCode::PRECONDITION_FAILED,
                 "PreconditionFailed",
-                message.clone(),
+                message,
             ),
             AppError::Internal { message, .. } => {
                 tracing::error!("Internal error: {}", message);
@@ -156,7 +141,7 @@ impl IntoResponse for AppError {
                 )
             }
             AppError::Database { source, .. } => {
-                if let sqlx::Error::Database(db_err) = &source {
+                if let sqlx::Error::Database(ref db_err) = source {
                     // 23505 = unique_violation (e.g. duplicate collection name)
                     if db_err.code().as_deref() == Some("23505") {
                         tracing::info!("Unique constraint violation: {}", db_err);
@@ -182,7 +167,7 @@ impl IntoResponse for AppError {
                             .into_response();
                     }
                 }
-                tracing::error!("Database error: {}", error_chain(source));
+                tracing::error!("Database error: {:#}", anyhow::Error::from(source));
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "DatabaseError",
@@ -190,7 +175,7 @@ impl IntoResponse for AppError {
                 )
             }
             AppError::Serialization { source, .. } => {
-                tracing::error!("Serialization error: {}", error_chain(source));
+                tracing::error!("Serialization error: {:#}", anyhow::Error::from(source));
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "SerializationError",
@@ -198,7 +183,7 @@ impl IntoResponse for AppError {
                 )
             }
             AppError::Io { source, .. } => {
-                tracing::error!("IO error: {}", error_chain(source));
+                tracing::error!("IO error: {:#}", anyhow::Error::from(source));
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "IoError",
