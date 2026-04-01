@@ -112,21 +112,15 @@ pub struct ErrorResponse {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code, description) = match self {
-            AppError::NotFound { message, .. } => {
-                (StatusCode::NOT_FOUND, "NotFound", message)
-            }
+            AppError::NotFound { message, .. } => (StatusCode::NOT_FOUND, "NotFound", message),
             AppError::BadRequest { message, .. } => {
                 (StatusCode::BAD_REQUEST, "BadRequest", message)
             }
             AppError::Unauthorized { message, .. } => {
                 (StatusCode::UNAUTHORIZED, "Unauthorized", message)
             }
-            AppError::Forbidden { message, .. } => {
-                (StatusCode::FORBIDDEN, "Forbidden", message)
-            }
-            AppError::Conflict { message, .. } => {
-                (StatusCode::CONFLICT, "Conflict", message)
-            }
+            AppError::Forbidden { message, .. } => (StatusCode::FORBIDDEN, "Forbidden", message),
+            AppError::Conflict { message, .. } => (StatusCode::CONFLICT, "Conflict", message),
             AppError::PreconditionFailed { message, .. } => (
                 StatusCode::PRECONDITION_FAILED,
                 "PreconditionFailed",
