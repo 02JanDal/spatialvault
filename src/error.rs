@@ -17,11 +17,11 @@ use std::backtrace::Backtrace;
 /// Walks the `std::error::Error::source()` chain and joins all messages
 /// with `: `, ensuring nested causes are not truncated.
 fn error_chain(err: &dyn std::error::Error) -> String {
-    use std::fmt::Write;
     let mut msg = err.to_string();
     let mut source = err.source();
     while let Some(cause) = source {
-        write!(&mut msg, ": {cause}").unwrap();
+        msg.push_str(": ");
+        msg.push_str(&cause.to_string());
         source = cause.source();
     }
     msg
