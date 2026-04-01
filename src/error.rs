@@ -111,26 +111,20 @@ pub struct ErrorResponse {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, code, description) = match &self {
-            AppError::NotFound { message, .. } => {
-                (StatusCode::NOT_FOUND, "NotFound", message.clone())
-            }
+        let (status, code, description) = match self {
+            AppError::NotFound { message, .. } => (StatusCode::NOT_FOUND, "NotFound", message),
             AppError::BadRequest { message, .. } => {
-                (StatusCode::BAD_REQUEST, "BadRequest", message.clone())
+                (StatusCode::BAD_REQUEST, "BadRequest", message)
             }
             AppError::Unauthorized { message, .. } => {
-                (StatusCode::UNAUTHORIZED, "Unauthorized", message.clone())
+                (StatusCode::UNAUTHORIZED, "Unauthorized", message)
             }
-            AppError::Forbidden { message, .. } => {
-                (StatusCode::FORBIDDEN, "Forbidden", message.clone())
-            }
-            AppError::Conflict { message, .. } => {
-                (StatusCode::CONFLICT, "Conflict", message.clone())
-            }
+            AppError::Forbidden { message, .. } => (StatusCode::FORBIDDEN, "Forbidden", message),
+            AppError::Conflict { message, .. } => (StatusCode::CONFLICT, "Conflict", message),
             AppError::PreconditionFailed { message, .. } => (
                 StatusCode::PRECONDITION_FAILED,
                 "PreconditionFailed",
-                message.clone(),
+                message,
             ),
             AppError::Internal { message, .. } => {
                 tracing::error!("Internal error: {}", message);
@@ -167,7 +161,7 @@ impl IntoResponse for AppError {
                             .into_response();
                     }
                 }
-                tracing::error!("Database error: {}", source);
+                tracing::error!("Database error: {:#}", anyhow::Error::from(source));
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "DatabaseError",
@@ -175,7 +169,7 @@ impl IntoResponse for AppError {
                 )
             }
             AppError::Serialization { source, .. } => {
-                tracing::error!("Serialization error: {}", source);
+                tracing::error!("Serialization error: {:#}", anyhow::Error::from(source));
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "SerializationError",
@@ -183,7 +177,7 @@ impl IntoResponse for AppError {
                 )
             }
             AppError::Io { source, .. } => {
-                tracing::error!("IO error: {}", source);
+                tracing::error!("IO error: {:#}", anyhow::Error::from(source));
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "IoError",
